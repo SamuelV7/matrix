@@ -72,6 +72,14 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  MatrixSecCompany,
+  MatrixSecInvalidSymbol,
+  MatrixSecNotFound,
+  MatrixSecRateLimited,
+  MatrixSecUnavailable,
+  MatrixSecUpstreamError,
+} from "./matrixSec.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -750,6 +758,24 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+class EnvironmentMatrixHttpApi extends HttpApiGroup.make("matrix").add(
+  HttpApiEndpoint.get("secCompany", "/api/matrix/sec/company", {
+    headers: OptionalBearerHeaders,
+    query: Schema.Struct({ symbol: Schema.String }),
+    success: MatrixSecCompany,
+    error: [
+      MatrixSecInvalidSymbol,
+      MatrixSecNotFound,
+      MatrixSecRateLimited,
+      MatrixSecUnavailable,
+      MatrixSecUpstreamError,
+      EnvironmentAuthInvalidError,
+      EnvironmentScopeRequiredError,
+      EnvironmentInternalError,
+    ],
+  }).middleware(EnvironmentAuthenticatedAuth),
+) {}
+
 class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
@@ -849,5 +875,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
+  .add(EnvironmentMatrixHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

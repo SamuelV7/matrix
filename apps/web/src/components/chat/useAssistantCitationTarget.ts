@@ -122,7 +122,12 @@ export function useAssistantCitationTarget({
       return;
     }
     const index = rows.findIndex(
-      (row) => row.kind === "message" && row.message.id === navigation.target.citation.messageId,
+      (row) =>
+        (row.kind === "message" && row.message.id === navigation.target.citation.messageId) ||
+        (row.kind === "matrix-answer" &&
+          row.additionalNotes?.some(
+            (note) => note.message.id === navigation.target.citation.messageId,
+          ) === true),
     );
     if (index < 0) {
       const foldRunId = getTurnFoldRunId(source.id);
@@ -188,7 +193,13 @@ export function useAssistantCitationTarget({
   const positioning = request !== null && finishedKey !== request.key;
   const sourceRow =
     target && positioning
-      ? rows.find((row) => row.kind === "message" && row.message.id === target.citation.messageId)
+      ? rows.find(
+          (row) =>
+            (row.kind === "message" && row.message.id === target.citation.messageId) ||
+            (row.kind === "matrix-answer" &&
+              row.additionalNotes?.some((note) => note.message.id === target.citation.messageId) ===
+                true),
+        )
       : undefined;
   return {
     target,

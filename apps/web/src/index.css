@@ -2451,4 +2451,12 @@ code {
       );
     }
   }
+
+  [data-research-conversation] .chat-composer-lane {
+    padding-inline-start: calc(env(safe-area-inset-left) + 0.75rem);
+    padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+  [data-research-conversation] [data-chat-canvas] .messages-timeline-scroll {
+    padding-inline: 0.75rem;
+  }
 }

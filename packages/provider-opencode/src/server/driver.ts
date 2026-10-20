@@ -13,6 +13,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
+import { makeOpenCodeModelPolicy } from "./modelPolicy.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
@@ -215,6 +216,7 @@ export const OpenCodeDriver: ProviderDriver<
       continuationGroupKey: continuationIdentity.continuationKey,
     });
     const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+    const modelPolicy = makeOpenCodeModelPolicy(effectiveConfig.allowedModels);
     const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
       probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -284,13 +286,15 @@ export const OpenCodeDriver: ProviderDriver<
         yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
       ),
     );
-    const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
-      probe: runtimeProbe,
-      v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-      ),
-    });
+    const orchestrationAdapter = modelPolicy.wrapAdapter(
+      selectOpenCodeRuntimeAdapter({
+        probe: runtimeProbe,
+        v1: openCodeV1Adapter,
+        v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+        ),
+      }),
+    );
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
       openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
     );
@@ -333,13 +337,15 @@ export const OpenCodeDriver: ProviderDriver<
       ...(effectiveConfig.serverPassword ? { serverPassword: effectiveConfig.serverPassword } : {}),
       environment: processEnv,
     });
-    const textGeneration = selectOpenCodeRuntimeTextGeneration(
-      runtimeProbe,
-      yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      ),
-      yield* OpenCode2TextGeneration.make().pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+    const textGeneration = modelPolicy.wrapTextGeneration(
+      selectOpenCodeRuntimeTextGeneration(
+        runtimeProbe,
+        yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
+          Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+        ),
+        yield* OpenCode2TextGeneration.make().pipe(
+          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+        ),
       ),
     );
 
@@ -360,6 +366,7 @@ export const OpenCodeDriver: ProviderDriver<
       { concurrency: "unbounded" },
     ).pipe(
       Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(modelPolicy.filterSnapshot),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
@@ -442,7 +449,10 @@ export const OpenCodeDriver: ProviderDriver<
       checkProviderOnSettingsChange: () => false,
       refreshOnInterval: false,
       initialSnapshot: (settings) =>
-        makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+        makePendingOpenCodeProvider(settings.provider).pipe(
+          Effect.map(modelPolicy.filterSnapshot),
+          Effect.map(stampIdentity),
+        ),
       checkProvider,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
@@ -453,7 +463,9 @@ export const OpenCodeDriver: ProviderDriver<
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          Effect.flatMap((enrichedSnapshot) =>
+            publishSnapshot(modelPolicy.filterSnapshot(enrichedSnapshot)),
+          ),
         ),
     }).pipe(
       Effect.mapError(

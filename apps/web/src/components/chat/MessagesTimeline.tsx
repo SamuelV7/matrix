@@ -118,7 +118,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { T3Wordmark } from "../T3Wordmark";
+import { MatrixMark } from "../MatrixMark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   ArrowRightIcon,
@@ -1980,7 +1980,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                 row.kind === "event" ||
                 row.kind === "attempt-fold" ||
                 row.kind === "html-render" ||
-                row.kind === "mcp-app"
+                row.kind === "mcp-app" ||
+                row.kind === "matrix-answer"
               ? "pb-2"
               : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -2030,6 +2031,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
+      {row.kind === "matrix-answer" ? <MatrixAnswerTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
@@ -2317,7 +2319,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"
         >
-          Sent by T3 Code
+          Sent by Matrix
         </p>
       ) : userMessage.attribution === "agent" ? (
         <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
@@ -2661,19 +2663,25 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
   );
 }
 
-function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function AssistantTimelineRow({
+  row,
+  itemKey = row.id,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  itemKey?: string;
+}) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+        <MessageAuthorHeading>Matrix</MessageAuthorHeading>
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
             {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-            itemKey={row.id}
+            itemKey={itemKey}
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
@@ -2869,6 +2877,40 @@ function ProposedPlanTimelineRow({
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
       />
+    </div>
+  );
+}
+
+function MatrixAnswerTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "matrix-answer" }>;
+}) {
+  return (
+    <div className="min-w-0 px-1">
+      <p className="text-xs text-muted-foreground">
+        Research workspace updated · {row.answer.spec.title}
+      </p>
+      {row.additionalNotes?.length ? (
+        <details className="mt-2 min-w-0 rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+            Additional agent notes ({row.additionalNotes.length})
+            {row.additionalNotes.some((note) => note.message.streaming) ? " · streaming" : ""}
+          </summary>
+          <div className="mt-3 min-w-0 space-y-4">
+            {row.additionalNotes.map((note) => (
+              <div
+                key={note.id}
+                data-message-id={note.message.id}
+                data-message-role="assistant"
+                className="group/assistant"
+              >
+                <AssistantTimelineRow row={note} itemKey={row.id} />
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -5049,7 +5091,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
-      return <T3Wordmark className={className} aria-hidden />;
+      return <MatrixMark className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":

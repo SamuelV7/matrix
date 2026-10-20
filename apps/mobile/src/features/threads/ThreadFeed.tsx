@@ -210,6 +210,7 @@ import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
+import { MatrixWorkspaceButton, ThreadMatrixAnswer } from "./ThreadMatrixAnswer";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import {
   assetEnvironment,
@@ -1079,6 +1080,25 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "matrix-answer") {
+    return (
+      <ThreadMatrixAnswer
+        environmentId={props.environmentId}
+        answer={entry.answer}
+        additionalNotes={entry.additionalNotes}
+        renderAdditionalNote={(message) =>
+          renderFeedEntry(
+            {
+              item: { type: "message", id: message.id, createdAt: message.createdAt, message },
+              index: info.index,
+            },
+            props,
+          )
+        }
+      />
+    );
+  }
+
   if (entry.type === "work-toggle") {
     return (
       <ThreadWorkGroupToggle
@@ -1199,7 +1219,7 @@ function renderFeedEntry(
             </Text>
           ) : presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by T3 Code
+              Sent by Matrix
             </Text>
           ) : presentation.attribution === "agent" ? (
             <AgentMessageAttribution
@@ -2477,13 +2497,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
     return (
-      <ThreadFeedPlaceholder
-        title={props.contentPresentation.title}
-        detail={props.contentPresentation.detail}
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
+      <View className="flex-1">
+        <ThreadFeedPlaceholder
+          title={props.contentPresentation.title}
+          detail={props.contentPresentation.detail}
+          topInset={topContentInset}
+          bottomInset={bottomContentInset}
+          horizontalPadding={horizontalPadding}
+        />
+        <View style={{ paddingBottom: bottomContentInset }}>
+          <MatrixWorkspaceButton
+            key={feedThreadKey}
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+          />
+        </View>
+      </View>
     );
   }
 
@@ -2613,15 +2642,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff ? (
-                <ThreadHandoffDivider
+              <>
+                {props.pendingHandoff ? (
+                  <ThreadHandoffDivider
+                    environmentId={props.environmentId}
+                    endpoints={props.pendingHandoff}
+                    iconColor={iconSubtleColor}
+                    surfaceColor={screenColor}
+                    label="Context handoff pending"
+                  />
+                ) : null}
+                <MatrixWorkspaceButton
+                  key={feedThreadKey}
                   environmentId={props.environmentId}
-                  endpoints={props.pendingHandoff}
-                  iconColor={iconSubtleColor}
-                  surfaceColor={screenColor}
-                  label="Context handoff pending"
+                  threadId={props.threadId}
                 />
-              ) : null
+              </>
             }
             contentContainerStyle={{
               paddingTop: 12,

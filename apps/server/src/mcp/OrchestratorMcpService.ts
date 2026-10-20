@@ -62,6 +62,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { matrixAnswerHistoryText } from "@t3tools/shared/matrixAnswerHistory";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -882,6 +883,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.text;
     case "proposed_plan":
       return item.markdown;
+    case "matrix_answer":
+      return matrixAnswerHistoryText(item.answer);
     case "todo_list":
       return [item.explanation, ...item.steps.map((step) => `[${step.status}] ${step.text}`)]
         .filter((line): line is string => line !== undefined)

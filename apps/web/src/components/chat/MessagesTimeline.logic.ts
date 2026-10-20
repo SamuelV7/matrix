@@ -47,6 +47,7 @@ import {
   type TurnDiffSummary,
 } from "../../types";
 import {
+  type MatrixAnswer,
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
@@ -80,7 +81,8 @@ function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
+  if (entry.kind === "html-render" || entry.kind === "mcp-app" || entry.kind === "matrix-answer")
+    return entry.runId;
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
 }
 
@@ -628,6 +630,15 @@ type MessagesTimelineRowContent =
       proposedPlan: ProposedPlan;
     }
   | {
+      kind: "matrix-answer";
+      id: string;
+      createdAt: string;
+      answer: MatrixAnswer;
+      additionalNotes?:
+        | ReadonlyArray<Extract<MessagesTimelineRowContent, { kind: "message" }>>
+        | undefined;
+    }
+  | {
       kind: "html-render";
       id: string;
       createdAt: string;
@@ -807,6 +818,7 @@ function deriveSupersededAttemptFolds(
       (entry.kind === "message" && entry.message.role === "user") ||
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
+      entry.kind === "matrix-answer" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -1350,6 +1362,72 @@ function deriveTimelineTurnFolds(
   });
 }
 
+/** Presentation moves, never the durable turn-item anchor. Only loaded answers own notes. */
+export function matrixAnswerPresentation(entries: ReadonlyArray<TimelineEntry>) {
+  const answers = new Map<string, Extract<TimelineEntry, { kind: "matrix-answer" }>>();
+  for (const entry of entries) {
+    if (entry.kind !== "matrix-answer") continue;
+    const previous = answers.get(entry.answer.id);
+    if (!previous || entry.answer.revision >= previous.answer.revision)
+      answers.set(entry.answer.id, entry);
+  }
+  if (answers.size === 0)
+    return {
+      entries,
+      notesByAnswerId: new Map<string, Extract<TimelineEntry, { kind: "message" }>[]>(),
+    };
+  const ownerByRun = new Map<RunId, string>();
+  for (const answer of answers.values())
+    if (answer.runId) ownerByRun.set(answer.runId, answer.answer.id);
+  for (const answer of answers.values()) {
+    const runId = answer.answer.lastPresentedRunId ?? answer.runId;
+    if (runId) ownerByRun.set(runId, answer.answer.id);
+  }
+  const notesByAnswerId = new Map<string, Extract<TimelineEntry, { kind: "message" }>[]>();
+  const placement = new Map<string, Extract<TimelineEntry, { kind: "matrix-answer" }>[]>();
+  for (const answer of answers.values()) {
+    const runId = answer.answer.lastPresentedRunId ?? answer.runId;
+    const tail = runId
+      ? entries.findLast(
+          (entry) =>
+            entry.kind !== "matrix-answer" &&
+            (timelineEntryRunId(entry) === runId ||
+              (entry.kind === "message" && entry.message.runId === runId)),
+        )
+      : undefined;
+    const anchor = tail?.id ?? answer.id;
+    const atAnchor = placement.get(anchor) ?? [];
+    const createdAt =
+      tail?.kind === "message" ? tail.message.updatedAt : (tail?.createdAt ?? answer.createdAt);
+    atAnchor.push({ ...answer, runId, createdAt });
+    placement.set(anchor, atAnchor);
+  }
+  const presented: TimelineEntry[] = [];
+  for (const entry of entries) {
+    const owner =
+      entry.kind === "message" &&
+      entry.message.role === "assistant" &&
+      !entry.message.attachments?.length &&
+      entry.projectedItem?.item.status !== "failed" &&
+      entry.message.runId
+        ? ownerByRun.get(entry.message.runId)
+        : undefined;
+    if (owner && entry.kind === "message") {
+      const notes = notesByAnswerId.get(owner) ?? [];
+      notes.push(entry);
+      notesByAnswerId.set(owner, notes);
+    } else if (entry.kind !== "matrix-answer") {
+      presented.push(entry);
+    }
+    const atAnchor = placement.get(entry.id);
+    if (atAnchor) {
+      presented.push(...atAnchor);
+      placement.delete(entry.id);
+    }
+  }
+  return { entries: presented, notesByAnswerId };
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
@@ -1371,7 +1449,8 @@ export function deriveMessagesTimelineRows(input: {
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = timelineRowEntries(input.timelineEntries);
+  const presentation = matrixAnswerPresentation(input.timelineEntries);
+  const timelineEntries = timelineRowEntries(presentation.entries);
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
@@ -1777,6 +1856,30 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    if (timelineEntry.kind === "matrix-answer") {
+      nextRows.push({
+        kind: "matrix-answer",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        answer: timelineEntry.answer,
+        additionalNotes: presentation.notesByAnswerId
+          .get(timelineEntry.answer.id)
+          ?.map((entry) => ({
+            kind: "message" as const,
+            id: entry.id,
+            createdAt: entry.createdAt,
+            message: entry.message,
+            ...(entry.projectedItem ? { projectedItem: entry.projectedItem } : {}),
+            durationStart: entry.message.createdAt,
+            showAssistantMeta: true,
+            showAssistantCopyButton: true,
+            assistantCopyStreaming: entry.message.streaming,
+            assistantTurnDiffSummary: turnDiffSummaryByAssistantMessageId.get(entry.message.id),
+          })),
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "html-render") {
       nextRows.push({
         kind: "html-render",
@@ -2131,6 +2234,20 @@ function replaceStreamingMessageRows(
   }
   if (replacements.size === 0) return previous.rows;
   return previous.rows.map((row) => {
+    if (row.kind === "matrix-answer" && row.additionalNotes) {
+      let changed = false;
+      const additionalNotes = row.additionalNotes.map((note) => {
+        const entry = replacements.get(note.message);
+        if (!entry) return note;
+        changed = true;
+        return {
+          ...note,
+          message: entry.message,
+          ...(entry.projectedItem === undefined ? {} : { projectedItem: entry.projectedItem }),
+        };
+      });
+      return changed ? { ...row, additionalNotes } : row;
+    }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
     return entry
@@ -2216,6 +2333,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "matrix-answer": {
+      const bm = b as typeof a;
+      return (
+        a.createdAt === bm.createdAt &&
+        a.answer === bm.answer &&
+        Equal.equals(a.additionalNotes, bm.additionalNotes)
+      );
+    }
 
     case "html-render": {
       // Entries rebuild on any tool update; an equal page must keep its mounted frame.

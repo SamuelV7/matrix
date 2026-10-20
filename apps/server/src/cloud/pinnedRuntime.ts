@@ -11,6 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
+  CLI_DISTRIBUTION_DISABLED_REASON,
   CLI_RELEASE_CHECKSUMS_FILE,
   cliArchiveFileName,
   cliArchivePlatformKey,
@@ -363,4 +364,11 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 });
 
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
-  pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
+  !input.releaseBaseUrl || input.releaseBaseUrl.includes("pingdotgg/t3code")
+    ? Effect.fail(
+        new PinnedRuntimeInstallError({
+          step: "installing a Matrix runtime",
+          cause: CLI_DISTRIBUTION_DISABLED_REASON,
+        }),
+      )
+    : pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));

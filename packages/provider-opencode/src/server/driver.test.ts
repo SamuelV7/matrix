@@ -159,6 +159,56 @@ it.layer(layer)("OpenCodeDriver 1.x workspace commands", (it) => {
 });
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
+  it.effect("filters pending custom models before discovery completes", () =>
+    Effect.gen(function* () {
+      const glm = "opencode/glm-5.3-flash-free";
+      const instance = yield* create(
+        {
+          serverUrl: "http://127.0.0.1:9",
+          allowedModels: [glm],
+          customModels: [glm, "opencode/paid-model"],
+        },
+        HttpClient.make(() => Effect.never),
+      );
+      const pending = yield* instance.snapshot.getSnapshot;
+      assert.deepStrictEqual(
+        pending.models.map((model) => model.slug),
+        [glm],
+      );
+      assert.strictEqual(pending.models[0]?.isDefault, true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps refreshed and cwd catalogs restricted, including custom models", () =>
+    Effect.gen(function* () {
+      const glm = "opencode/glm-5.3-flash-free";
+      const deepseek = "opencode/deepseek-v4.1-flash-free";
+      const instance = yield* create(
+        {
+          serverUrl: "http://127.0.0.1:4096",
+          serverPassword: "secret",
+          allowedModels: [glm, deepseek],
+          customModels: [glm, deepseek, "opencode/paid-model"],
+        },
+        replayOpenCodeServer(
+          { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
+          "secret",
+        ),
+      );
+      yield* instance.snapshot.refresh;
+      for (const snapshot of [
+        yield* instance.snapshot.getSnapshot,
+        yield* instance.snapshotForCwd!("/work"),
+      ]) {
+        assert.deepStrictEqual(
+          snapshot.models.map((model) => model.slug),
+          [glm, deepseek],
+        );
+        assert.strictEqual(snapshot.models[0]?.isDefault, true);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;

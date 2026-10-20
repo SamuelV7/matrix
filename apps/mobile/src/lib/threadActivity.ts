@@ -39,6 +39,7 @@ import {
 import type {
   ChatAttachment,
   MessageId,
+  MatrixAnswer,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2ExecutionNode,
@@ -173,6 +174,14 @@ type RawThreadFeedEntry =
       readonly activity: ThreadFeedActivity;
     }
   | {
+      readonly type: "matrix-answer";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly answer: MatrixAnswer;
+      readonly additionalNotes?: ReadonlyArray<ThreadFeedMessage>;
+    }
+  | {
       readonly type: "html-render";
       readonly id: string;
       readonly createdAt: string;
@@ -194,7 +203,7 @@ type RawThreadFeedEntry =
 export type ThreadFeedEntry = ThreadFeedEntryContent & { readonly continuesWorkLog?: boolean };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" }>
+  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "mcp-app" | "matrix-answer" }>
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -562,6 +571,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "user_input_request":
     case "user_message":
     case "assistant_message":
+    case "matrix_answer":
       return "message";
     case "dynamic_tool":
       return isJavaScriptReplTool(item.toolName) ? "code" : "wrench";
@@ -666,6 +676,8 @@ function itemSummary(
       return "User message";
     case "assistant_message":
       return "Assistant message";
+    case "matrix_answer":
+      return item.answer.spec.title;
   }
 }
 
@@ -716,6 +728,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "user_message":
     case "assistant_message":
       return item.text || null;
+    case "matrix_answer":
+      return item.answer.spec.summary || null;
   }
 }
 
@@ -1095,7 +1109,8 @@ function deriveThreadFeedRunFolds(
         ? (entry.message.runId ?? runlessKey)
         : entry.type === "activity-group" ||
             entry.type === "html-render" ||
-            entry.type === "mcp-app"
+            entry.type === "mcp-app" ||
+            entry.type === "matrix-answer"
           ? (entry.runId ?? runlessKey)
           : null;
     if (!ownRunId) continue;
@@ -1156,6 +1171,7 @@ function deriveThreadFeedRunFolds(
             entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
+            entry.type !== "matrix-answer" &&
             !(
               entry.type === "activity-group" &&
               entry.activities.some(
@@ -1947,6 +1963,77 @@ function firstChangedIndex<T>(previous: ReadonlyArray<T>, next: ReadonlyArray<T>
   return index;
 }
 
+/**
+ * Storage anchors remain immutable. Present each loaded research document once
+ * at its latest presenting turn, with that turn's prose available as notes.
+ */
+export function presentMatrixAnswers(feed: ReadonlyArray<ThreadFeedEntry>): ThreadFeedEntry[] {
+  const answers = new Map<
+    string,
+    { entry: Extract<ThreadFeedEntry, { type: "matrix-answer" }>; index: number }
+  >();
+  for (const [index, entry] of feed.entries()) {
+    if (entry.type !== "matrix-answer") continue;
+    const prior = answers.get(entry.answer.id);
+    if (!prior || entry.answer.revision >= prior.entry.answer.revision) {
+      answers.set(entry.answer.id, { entry, index });
+    }
+  }
+  if (answers.size === 0) return feed as ThreadFeedEntry[];
+  const plans = [...answers.values()].map(({ entry, index }) => {
+    const runId = entry.answer.lastPresentedRunId ?? entry.runId;
+    let destination = index;
+    for (let i = 0; i < feed.length; i += 1) {
+      const candidate = feed[i]!;
+      const candidateRun =
+        candidate.type === "message"
+          ? candidate.message.runId
+          : "runId" in candidate
+            ? candidate.runId
+            : null;
+      if (candidate.type !== "matrix-answer" && runId !== null && candidateRun === runId) {
+        destination = i;
+      }
+    }
+    return { entry, runId, destination, notes: [] as ThreadFeedMessage[] };
+  });
+  // Multiple documents may share a turn. Its last document owns the notes so
+  // neither prose nor the UI is duplicated.
+  const noteOwner = new Map<RunId, (typeof plans)[number]>();
+  for (const plan of plans) {
+    if (plan.entry.runId !== null) noteOwner.set(plan.entry.runId, plan);
+    if (plan.runId !== null) noteOwner.set(plan.runId, plan);
+  }
+  const foldedMessages = new Set<string>();
+  for (const entry of feed) {
+    if (
+      entry.type !== "message" ||
+      entry.message.role !== "assistant" ||
+      entry.message.runId === null
+    )
+      continue;
+    const owner = noteOwner.get(entry.message.runId);
+    if (owner) {
+      owner.notes.push(entry.message);
+      foldedMessages.add(entry.id);
+    }
+  }
+  const result: ThreadFeedEntry[] = [];
+  for (const [index, entry] of feed.entries()) {
+    if (entry.type !== "matrix-answer" && !foldedMessages.has(entry.id)) result.push(entry);
+    for (const plan of plans) {
+      if (plan.destination !== index) continue;
+      result.push({
+        ...plan.entry,
+        runId: plan.runId,
+        createdAt: entry.type === "message" ? entry.message.updatedAt : entry.createdAt,
+        additionalNotes: plan.notes,
+      });
+    }
+  }
+  return result;
+}
+
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
@@ -2031,6 +2118,19 @@ export function buildThreadFeed(
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
+    if (item.type === "matrix_answer") {
+      const entry: RawThreadFeedEntry = {
+        type: "matrix-answer",
+        id: `matrix-answer:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        answer: item.answer,
+      };
+      projectedEntriesCache.set(row, { attemptId, entry });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
     const render =
       item.type === "dynamic_tool" && item.status === "completed"
         ? htmlRenderFromToolItem(item)
@@ -2180,5 +2280,5 @@ export function buildThreadFeed(
             restarts,
           };
   }
-  return feed;
+  return presentMatrixAnswers(feed);
 }

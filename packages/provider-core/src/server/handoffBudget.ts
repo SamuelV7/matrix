@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
+import { matrixAnswerHistoryText } from "@t3tools/shared/matrixAnswerHistory";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -162,6 +163,9 @@ export function historicalMessage(
       break;
     case "proposed_plan":
       text = item.markdown;
+      break;
+    case "matrix_answer":
+      text = matrixAnswerHistoryText(item.answer);
       break;
     default:
       return null;

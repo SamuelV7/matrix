@@ -82,7 +82,7 @@ const repositoryIdentity = {
   locator: {
     source: "git-remote" as const,
     remoteName: "upstream",
-    remoteUrl: "https://github.com/t3tools/t3code.git",
+    remoteUrl: "https://github.com/t3tools/matrix.git",
   },
   provider: "github",
   owner: "t3tools",

@@ -3,12 +3,9 @@ import { expect, it } from "@effect/vitest";
 import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -343,124 +340,22 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
-  it.effect("stages and preflights before asking the launcher for an update ID", () =>
+  it.effect.each([
+    { mode: "web" as const, managed: true },
+    { mode: "web" as const, managed: false },
+    { mode: "desktop" as const, managed: true },
+  ])("rejects release installation before staging ($mode, managed=$managed)", (options) =>
     Effect.gen(function* () {
-      const { selfUpdate, order } = yield* makeHarness();
-      expect(yield* selfUpdate.update({ targetVersion: "1.1.0" })).toEqual({
-        targetVersion: "1.1.0",
-        method: "boot-service",
-        updateId: "launcher-id",
-      });
-      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
-    }),
-  );
-
-  it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
-    Effect.gen(function* () {
-      const web = yield* makeHarness();
-      expect(
-        (yield* web.selfUpdate.update({ targetVersion: "latest" }).pipe(Effect.flip)).reason,
-      ).toBe("'latest' is not an exact t3 version.");
-      const desktop = yield* makeHarness({ mode: "desktop" });
-      expect(
-        (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
-      ).toContain("desktop app");
-      expect([...web.order, ...desktop.order]).toEqual([]);
-    }),
-  );
-
-  it.effect("delegates desktop-managed updates to the desktop app when available", () =>
-    Effect.gen(function* () {
-      const stages: string[] = [];
-      const { selfUpdate, order } = yield* makeHarness({
-        mode: "desktop",
-        desktopAppUpdate: {
-          available: true,
-          run: (reportProgress) =>
-            reportProgress("downloading").pipe(
-              Effect.andThen(reportProgress("installing")),
-              Effect.as({ targetVersion: "1.2.0", method: "desktop-app" as const }),
-            ),
-          commit: () => Effect.never,
-        },
-      });
-      const result = yield* selfUpdate.update({ targetVersion: "1.1.0" }, (stage) =>
-        Effect.sync(() => void stages.push(stage)),
-      );
-      expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
-      expect(stages).toEqual(["downloading", "installing"]);
+      const { selfUpdate, order } = yield* makeHarness(options);
+      const error = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(error._tag).toBe("ServerSelfUpdateError");
       expect(order).toEqual([]);
-    }),
-  );
-
-  it.effect("preserves the preflight refusal reason", () =>
-    Effect.gen(function* () {
-      const { selfUpdate } = yield* makeHarness({ preflight: "blocked" });
-      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
-        "local update required",
-      );
-    }),
-  );
-
-  it.effect("allows only one update at a time", () =>
-    Effect.gen(function* () {
-      const requested = yield* Deferred.make<void>();
-      const accepted = yield* Deferred.make<string>();
-      const { selfUpdate } = yield* makeHarness({
-        requestUpdate: () =>
-          Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(accepted))),
-      });
-      const first = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
-        startImmediately: true,
-      });
-      yield* Deferred.await(requested);
-      expect((yield* selfUpdate.update({ targetVersion: "1.1.1" }).pipe(Effect.flip)).reason).toBe(
-        "A server update is already in progress.",
-      );
-      yield* Deferred.succeed(accepted, "launcher-id");
-      expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
-    }),
-  );
-
-  it.effect("keeps preparing after the progress stream closes", () =>
-    Effect.gen(function* () {
-      const releaseDownload = yield* Deferred.make<void>();
-      const sawDownloading = yield* Deferred.make<void>();
-      const accepted = yield* Deferred.make<void>();
-      const { selfUpdate, order } = yield* makeHarness({
-        beforeDownload: Deferred.await(releaseDownload),
-        requestUpdate: () =>
-          Effect.sync(() => {
-            order.push("accept");
-          }).pipe(Effect.andThen(Deferred.succeed(accepted, undefined)), Effect.as("launcher-id")),
-      });
-
-      const consumed = yield* ServerSelfUpdate.updateProgressStream(selfUpdate, {
-        targetVersion: "1.1.0",
-      }).pipe(
-        Stream.tap((event) =>
-          event.type === "progress" && event.stage === "downloading"
-            ? Deferred.succeed(sawDownloading, undefined)
-            : Effect.void,
-        ),
-        Stream.runDrain,
-        Effect.forkChild,
-      );
-
-      yield* Deferred.await(sawDownloading);
-      // The socket drop ends the stream. The download is still held.
-      yield* Fiber.interrupt(consumed);
-      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
-        "A server update is already in progress.",
-      );
-
-      yield* Deferred.succeed(releaseDownload, undefined);
-      // `installing` is offered only after the stream queue has shut down.
-      yield* Deferred.await(accepted);
-      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
-      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
-        "A server update is already in progress.",
-      );
+      expect(
+        ServerSelfUpdate.resolveServerSelfUpdateCapability({
+          desktopManaged: options.mode === "desktop",
+          launcherManaged: options.managed,
+        }),
+      ).toBeNull();
     }),
   );
 });

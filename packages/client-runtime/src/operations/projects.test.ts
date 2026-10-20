@@ -56,7 +56,7 @@ describe("add project shared logic", () => {
       "https://github.com/imputnet/helium.git",
     );
     expect(normalizePastedCloneUrl("  pingdotgg/t3code  ")).toBe(
-      "https://github.com/pingdotgg/t3code.git",
+      "https://github.com/pingdotgg/matrix.git",
     );
   });
 

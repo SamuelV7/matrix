@@ -558,17 +558,17 @@ describe("findAccessibleWindow", () => {
   it.each(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])(
     "ignores a leading Wayland title spinner frame %s",
     (frame) => {
-      const windows = [{ name: `${frame} t3code`, bounds: captured.bounds }];
+      const windows = [{ name: `${frame} Project notes`, bounds: captured.bounds }];
 
-      expect(findAccessibleWindow(windows, { ...captured, title: "⠋ t3code" }, "wayland")).toBe(
-        windows[0],
-      );
+      expect(
+        findAccessibleWindow(windows, { ...captured, title: "⠋ Project notes" }, "wayland"),
+      ).toBe(windows[0]);
     },
   );
 
   it.each([
-    ["⠋ t3code", "t3code"],
-    ["t3code", "⠙ t3code"],
+    ["⠋ Project notes", "Project notes"],
+    ["Project notes", "⠙ Project notes"],
   ])("matches a Wayland spinner starting or stopping: %s → %s", (title, name) => {
     const windows = [{ name, bounds: captured.bounds }];
 
@@ -576,10 +576,10 @@ describe("findAccessibleWindow", () => {
   });
 
   it.each([
-    ["⠋ t3code", "⠙ private"],
-    ["t3code ⠋", "t3code ⠙"],
-    ["⠋t3code", "⠙t3code"],
-    ["⠁ t3code", "⠙ t3code"],
+    ["⠋ Project notes", "⠙ Private notes"],
+    ["Project notes ⠋", "Project notes ⠙"],
+    ["⠋Project notes", "⠙Project notes"],
+    ["⠁ Project notes", "⠙ Project notes"],
     ["⠋", "⠋"],
   ])("does not guess a Wayland title match: %s → %s", (title, name) => {
     expect(
@@ -590,8 +590,8 @@ describe("findAccessibleWindow", () => {
   it("rejects matching spinners when the window sizes differ", () => {
     expect(
       findAccessibleWindow(
-        [{ name: "⠙ t3code", bounds: { ...captured.bounds, width: 400 } }],
-        { ...captured, title: "⠋ t3code" },
+        [{ name: "⠙ Project notes", bounds: { ...captured.bounds, width: 400 } }],
+        { ...captured, title: "⠋ Project notes" },
         "wayland",
       ),
     ).toBeUndefined();
@@ -599,20 +599,20 @@ describe("findAccessibleWindow", () => {
 
   it("rejects ambiguous normalized titles even if one matches the captured spinner exactly", () => {
     const windows = [
-      { name: "⠋ t3code", bounds: captured.bounds },
-      { name: "⠙ t3code", bounds: captured.bounds },
+      { name: "⠋ Project notes", bounds: captured.bounds },
+      { name: "⠙ Project notes", bounds: captured.bounds },
     ];
 
     expect(
-      findAccessibleWindow(windows, { ...captured, title: "⠋ t3code" }, "wayland"),
+      findAccessibleWindow(windows, { ...captured, title: "⠋ Project notes" }, "wayland"),
     ).toBeUndefined();
   });
 
   it("keeps exact title matching outside Wayland", () => {
     expect(
-      findAccessibleWindow([{ name: "⠙ t3code", bounds: captured.bounds }], {
+      findAccessibleWindow([{ name: "⠙ Project notes", bounds: captured.bounds }], {
         ...captured,
-        title: "⠋ t3code",
+        title: "⠋ Project notes",
       }),
     ).toBeUndefined();
   });

@@ -1,141 +1,65 @@
-# T3 Code
+# Matrix
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+Financial intelligence, for everyone. Matrix is an agentic research workspace built from T3 Code, with a Rust SEC data service powered by stockpricer's existing financial extraction code.
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
+## Run locally
 
-## "Wait, what are you selling me?"
+Requires Node.js 24, Rust/Cargo, and [Vite+](https://viteplus.dev/guide/).
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
-
-## Installation
-
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
-> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
-> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
-
-### Command line
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
-
-To try it once without installing, run `npx t3@latest` instead.
-
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
-
-```bash
-winget install T3Tools.T3Code
-```
-
-#### Windows (`scoop`)
-
-```bash
-scoop install extras/t3code
-```
-
-#### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
-
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
-
-## Documentation
-
-Full docs live in [docs/](./docs). There's no docs site yet.
-
-- [Install and first run](./docs/user/install.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
-- [Keeping app and server in sync](./docs/user/updating.md)
-- [Source control integrations](./docs/user/source-control.md)
-- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
-
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
+```sh
 vp i
+cp .env.example .env
 ```
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+Set `SEC_USER_AGENT` in `.env` to identify Matrix and your real contact email. SEC EDGAR requires an identifiable client; no SEC API key is needed. Then:
 
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+```sh
+vp run dev
+```
 
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+Open the pairing URL printed by the launcher. Matrix starts its Rust data daemon and the application together, using a random private daemon credential and loopback port. Application state defaults to a per-checkout directory under `~/.matrix/dev/`, separate from T3 Code; the SEC cache lives in this checkout's ignored `.matrix/sec-cache/`. Stop the launcher to stop both services.
+
+`vp run dev:desktop` starts the inherited Electron development surface with the same data daemon. The financial research screen currently ships in the web/shared desktop renderer; the native mobile app retains the agent companion experience.
+
+## Research a company
+
+The home page opens `/research`. Enter a ticker such as `AAPL`, a numeric CIK, or `cik:320193`.
+
+- **Guided** explains financial terms and keeps source tables collapsed.
+- **Analyst** exposes exact period boundaries, filing accessions, and SEC taxonomy tags.
+- Six initial reported metrics: revenue, net income, operating cash flow, capital expenditure, assets, and liabilities. Annual observations are charted with exact values and filing links available underneath.
+- Recent filings link directly to SEC archive documents. Source retrieval timestamps and extraction limitations remain visible.
+- **Ask an agent** opens a research prompt in the existing agent workspace. Configure an available provider in Settings first. The read-only MCP tool `matrix_sec_company` gives agents the same sourced company response; it does not require shell access to the data daemon.
+
+These are historical disclosures, not live prices. This screen displays USD only, does not convert currencies, and does not invent quarterly, TTM, missing, or ambiguous values. It is not a trading or investment-advice service.
+
+## Backend boundary
+
+| Component                        | Responsibility                                                                                                                                                                                                  |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing Node/Effect application | Agent providers, sessions, authenticated client connections, HTTP/MCP access, and UI delivery.                                                                                                                  |
+| `native/matrix-data`             | Rust daemon for SEC network access, rate spacing, validated success caching, company identity, filing links, and response assembly.                                                                             |
+| `native/stockpricer-core`        | Actual stockpricer company model, SEC XBRL decoder, annual-statement extraction, and its existing domain regression tests, imported from `~/starforge/stockpricer/src/company/` and `src/sec/company_facts.rs`. |
+
+The domain core does not depend on stockpricer's PostgreSQL database, HTTP server, authentication, or a sibling checkout at runtime. Matrix has no external path dependency on `~/starforge/stockpricer`. Its data adapter calls the imported engine rather than maintaining a second financial-normalization implementation.
+
+SEC requests are spaced at least 250 ms apart within the daemon. Successful ticker data caches for 24 hours; company submissions and facts cache for 15 minutes. Failures never become substitute data. A 403/429 triggers a one-minute upstream cooldown. This is a per-daemon limiter: multiple instances sharing an egress IP must coordinate their combined SEC traffic.
+
+`MATRIX_HOME` and `MATRIX_DATA_CACHE_DIR` override local storage. Keep application state outside Git checkouts: the agent backend intentionally disables project-free research workspaces inside a checkout to prevent inheriting its Git status and checkpoints. `MATRIX_DATA_BIN` selects a prebuilt data executable; otherwise the launcher builds it with Cargo. The browser talks only to the authenticated application endpoint `/api/matrix/sec/company`, not directly to the private daemon.
+
+## Focused checks
+
+```sh
+vp run test:data
+vp test run apps/web/src/matrix/annualTrend.test.ts
+vp test run apps/server/src/mcp/toolkits/worktree/registration.test.ts
+vp run --filter @t3tools/contracts typecheck
+vp run --filter t3 typecheck
+vp run --filter @t3tools/web typecheck
+```
+
+Internal `@t3tools/*` package names and agent protocol identifiers remain implementation identifiers, not product branding. Matrix does not install official T3 Code updates; build this checkout instead. Fork-inherited deployment workflows are disabled on the Matrix GitHub repository.
+
+## Attribution
+
+Matrix is derived from [T3 Code](https://github.com/pingdotgg/t3code). Its original MIT copyright and license notices are retained in [LICENSE](LICENSE). The imported financial engine comes from the existing stockpricer project; its source modules and domain tests are retained, with Matrix's transport and UI kept outside that core.

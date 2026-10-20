@@ -68,10 +68,18 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "matrix:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+
+export function researchQuestionAction(input: {
+  hasDraft: boolean;
+  hasPendingRequest: boolean;
+  editingQueuedRun: boolean;
+}): "stage" | "send" {
+  return input.hasDraft || input.hasPendingRequest || input.editingQueuedRun ? "stage" : "send";
+}
 
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],

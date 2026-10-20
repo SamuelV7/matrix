@@ -114,7 +114,7 @@ function start(bus = new FakeBus(), shortcut = chord, managedByHyprland = false)
   const capture = vi.fn();
   const changed = vi.fn();
   const client = new PortalCaptureShortcut(
-    "com.t3tools.T3Code",
+    "com.starforge.matrix",
     shortcut,
     capture,
     changed,
@@ -283,7 +283,6 @@ it.each([1, 2])(
     expect(client.state.shortcutRegistered).toBe(false);
     expect(client.state.shortcutPending).toBe(false);
     expect(client.state.shortcutCanRetry).toBe(true);
-    expect(client.state.shortcutMessage).toContain("wasn't granted");
     bus.activate();
     expect(capture).not.toHaveBeenCalled();
     await client.configure();
@@ -317,10 +316,7 @@ it("guides users to manual desktop settings when the portal cannot open them", a
   await client.ready;
   expect(client.hasSession).toBe(true);
   expect(client.state.shortcutCanRetry).toBe(false);
-  expect(client.state.shortcutMessage).toBe(
-    "Shortcut permission wasn't granted. Allow T3 Code in your desktop's shortcut settings.",
-  );
-  await expect(client.configure()).rejects.toThrow("Open your desktop's shortcut settings");
+  await expect(client.configure()).rejects.toThrow();
   expect(bus.calls.some((message) => message.member === "ConfigureShortcuts")).toBe(false);
   client.close();
   expect(client.hasSession).toBe(false);

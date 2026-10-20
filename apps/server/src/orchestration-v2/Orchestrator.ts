@@ -23,6 +23,8 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
+  MatrixAnswer,
+  MatrixAnswerError,
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
@@ -80,6 +82,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { decodeSpec, requestedMetrics, validateResearchAnswer } from "../matrix/answerData.ts";
+import { AnswerCallerCheck } from "../matrix/AnswerCaller.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
   isCheckpointRestoreIsolated,
@@ -289,6 +293,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  MatrixAnswerError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -497,6 +502,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "matrix.answer.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -513,6 +519,18 @@ const decodeUserInputAnswers = Schema.decodeUnknownEffect(
       Schema.Array(Schema.String),
       Schema.Struct({ answers: Schema.Array(Schema.String) }),
     ]),
+  ),
+);
+
+const decodeMatrixAnswer = Schema.decodeEffect(MatrixAnswer);
+const encodeMatrixAnswerContent = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      spec: MatrixAnswer.fields.spec,
+      companies: MatrixAnswer.fields.companies,
+      datasets: MatrixAnswer.fields.datasets,
+      lastPresentedRunId: MatrixAnswer.fields.lastPresentedRunId,
+    }),
   ),
 );
 
@@ -7605,6 +7623,131 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchMatrixAnswerRecord = Effect.fn("orchestrationV2.dispatch.matrixAnswerRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "matrix.answer.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const checkCaller = yield* AnswerCallerCheck;
+      if (checkCaller !== undefined) yield* checkCaller;
+      const answer = yield* decodeMatrixAnswer(command.answer).pipe(
+        Effect.mapError((cause) => new MatrixAnswerError({ reason: "invalid_request", cause })),
+      );
+      yield* decodeSpec(answer.spec);
+      yield* validateResearchAnswer(answer);
+      const metrics = requestedMetrics(answer.spec);
+      if (
+        answer.companies.length !== answer.spec.symbols.length ||
+        new Set(answer.companies.map((company) => company.cik.replace(/^0+/, ""))).size !==
+          answer.companies.length ||
+        answer.companies.some(
+          (company, index) =>
+            company.symbol !== answer.spec.symbols[index] ||
+            company.metrics.length !== metrics.length ||
+            company.metrics.some((metric, metricIndex) => metric.id !== metrics[metricIndex]),
+        )
+      ) {
+        return yield* new MatrixAnswerError({ reason: "invalid_request" });
+      }
+      if (answer.threadId !== command.threadId)
+        return yield* new MatrixAnswerError({ reason: "invalid_request" });
+      if (command.runId !== null && answer.lastPresentedRunId !== command.runId)
+        return yield* new MatrixAnswerError({ reason: "invalid_request" });
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "attempts", "providerTurns"], {
+          messageRoles: [],
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new MatrixAnswerError({
+                reason:
+                  cause._tag === "ProjectionStoreThreadNotFoundError" ? "not_found" : "unavailable",
+                cause,
+              }),
+          ),
+        );
+      if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null)
+        return yield* new MatrixAnswerError({ reason: "not_found" });
+      const owner = yield* projectionStore
+        .getTurnItemOwner(answer.id)
+        .pipe(Effect.mapError((cause) => new MatrixAnswerError({ reason: "unavailable", cause })));
+      if (owner !== null && owner !== command.threadId)
+        return yield* new MatrixAnswerError({ reason: "not_found" });
+      const existing = yield* projectionStore
+        .getTurnItem({ threadId: command.threadId, itemId: answer.id })
+        .pipe(Effect.mapError((cause) => new MatrixAnswerError({ reason: "unavailable", cause })));
+      if (existing !== null && existing.type !== "matrix_answer")
+        return yield* new MatrixAnswerError({ reason: "conflict" });
+      if (command.expectedRevision === null) {
+        if (existing !== null) return yield* new MatrixAnswerError({ reason: "conflict" });
+        if (answer.revision !== 1 || answer.pinned || command.runId === null)
+          return yield* new MatrixAnswerError({ reason: "invalid_request" });
+      } else {
+        if (existing === null) return yield* new MatrixAnswerError({ reason: "not_found" });
+        if (existing.answer.revision !== command.expectedRevision)
+          return yield* new MatrixAnswerError({ reason: "conflict" });
+        if (
+          answer.revision !== command.expectedRevision + 1 ||
+          answer.createdAt !== existing.answer.createdAt
+        )
+          return yield* new MatrixAnswerError({ reason: "invalid_request" });
+        if (command.runId !== null && answer.pinned !== existing.answer.pinned)
+          return yield* new MatrixAnswerError({ reason: "invalid_request" });
+        if (
+          command.runId === null &&
+          encodeMatrixAnswerContent(answer) !== encodeMatrixAnswerContent(existing.answer)
+        )
+          return yield* new MatrixAnswerError({ reason: "invalid_request" });
+      }
+      const run =
+        command.runId === null
+          ? undefined
+          : projection.runs.find((candidate) => candidate.id === command.runId);
+      if (
+        command.runId !== null &&
+        (run === undefined ||
+          run.rootNodeId === null ||
+          !["starting", "running", "waiting"].includes(run.status))
+      )
+        return yield* new MatrixAnswerError({ reason: "not_found" });
+      const now = yield* DateTime.now;
+      const turnItem: OrchestrationV2TurnItem =
+        existing === null
+          ? {
+              id: answer.id,
+              threadId: command.threadId,
+              runId: run!.id,
+              nodeId: run!.rootNodeId,
+              providerThreadId: run!.providerThreadId,
+              providerTurnId: providerTurnForRun(projection, run!)?.id ?? null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: yield* nextTurnItemOrdinal(projection),
+              status: "completed",
+              title: answer.spec.title,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "matrix_answer",
+              answer,
+            }
+          : { ...existing, title: answer.spec.title, updatedAt: now, answer };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        ...(turnItem.runId === null ? {} : { runId: turnItem.runId }),
+        ...(turnItem.nodeId === null ? {} : { nodeId: turnItem.nodeId }),
+        ...(run === undefined ? {} : { providerInstanceId: run.providerInstanceId }),
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = Effect.fn("Orchestrator.dispatchRuntimeRequestRespond")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
@@ -11414,6 +11557,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "matrix.answer.record":
+        yield* dispatchMatrixAnswerRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

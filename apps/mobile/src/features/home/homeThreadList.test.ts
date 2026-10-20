@@ -130,7 +130,7 @@ describe("home project scopes", () => {
       locator: {
         source: "git-remote" as const,
         remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+        remoteUrl: "git@github.com:pingdotgg/matrix.git",
       },
     };
     const projects = [
@@ -173,7 +173,7 @@ describe("home project scopes", () => {
       locator: {
         source: "git-remote" as const,
         remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+        remoteUrl: "git@github.com:pingdotgg/matrix.git",
       },
     };
     const projects = [
@@ -295,7 +295,7 @@ describe("home project scopes", () => {
       locator: {
         source: "git-remote" as const,
         remoteName: "origin",
-        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+        remoteUrl: "git@github.com:pingdotgg/matrix.git",
       },
     };
     const olderMember = makeProject({

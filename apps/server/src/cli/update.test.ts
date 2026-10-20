@@ -168,7 +168,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update service", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "reports the service switch as pending after installing the target runtime",
+    "rejects distribution updates before replacing the runtime or background service",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -214,7 +214,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
           }),
         );
         const lines: string[] = [];
-        yield* Command.runWith(updateCommand, { version: packageJson.version })([
+        const error = yield* Command.runWith(updateCommand, { version: packageJson.version })([
           targetVersion,
           "--yes",
           "--base-dir",
@@ -230,13 +230,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update servic
             },
           }),
           Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+          Effect.flip,
         );
 
-        expect(installs).toEqual([{ allowDowngrade: false, start: true }]);
-        const output = lines.join("\n");
-        expect(output).not.toContain("Background service restarted");
-        expect(output).toContain(`Background service switching to ${targetVersion}`);
-        expect(output).toContain(logPath);
+        expect(error).toMatchObject({ _tag: "CliUpdateError" });
+        expect(installs).toEqual([]);
+        expect(lines).toEqual([]);
       }),
   );
 });

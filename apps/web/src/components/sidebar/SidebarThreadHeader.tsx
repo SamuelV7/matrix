@@ -1,4 +1,10 @@
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import {
+  FolderPlusIcon,
+  SearchIcon,
+  SlidersHorizontalIcon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -10,12 +16,14 @@ import {
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   hasProjects: boolean;
   projectScope: ReactNode;
+  projectScopeActive: boolean;
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
@@ -36,6 +44,7 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  projectScopeActive,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -57,8 +66,8 @@ export function SidebarThreadHeader({
   // screen reader on nothing.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+    ? `New research (${newThreadShortcutLabel})`
+    : "New research";
 
   return (
     <div className="flex items-center gap-1">
@@ -105,15 +114,38 @@ export function SidebarThreadHeader({
       </div>
       <div className="flex shrink-0 items-center">
         {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
+          <Popover>
+            <PopoverTrigger
+              render={
+                <SidebarMenuButton
+                  size="icon"
+                  aria-label={
+                    projectScopeActive
+                      ? "Session context, project filter active"
+                      : "Session context"
+                  }
+                  title="Advanced session context"
+                  isActive={projectScopeActive}
+                >
+                  <SlidersHorizontalIcon />
+                </SidebarMenuButton>
+              }
+            />
+            <PopoverPopup side="bottom" align="end" padding="compact" width="sm">
+              <p className="mb-3 text-xs text-muted-foreground">
+                Optional project context for existing agent sessions.
+              </p>
+              <div className="flex items-center gap-2">
+                {projectScope}
+                <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+                  <FolderPlusIcon />
+                </SidebarHeaderIconButton>
+              </div>
+            </PopoverPopup>
+          </Popover>
         ) : null}
         <SidebarHeaderIconButton
-          label="New thread"
+          label="New research"
           tooltip={
             showNewThreadInProjectHint ? (
               <span className="flex flex-col gap-0.5">

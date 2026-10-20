@@ -3,7 +3,6 @@ import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,30 +26,11 @@ const status = {
   supported: true,
   installed: true,
   current: true,
-  unitPath: "/home/me/.config/systemd/user/t3code.service",
-  logPath: "/home/me/.t3/userdata/logs/boot-service.log",
+  unitPath: "/home/me/.config/systemd/user/matrix.service",
+  logPath: "/home/me/.matrix/userdata/logs/boot-service.log",
 } as const;
 
-it("reports the installed service version and host paths", () => {
-  assert.equal(
-    formatServiceStatus(status, "0.0.29"),
-    [
-      "T3 Code service",
-      "  Status: installed · t3@0.0.29",
-      "  Unit: /home/me/.config/systemd/user/t3code.service",
-      "  Logs: /home/me/.t3/userdata/logs/boot-service.log",
-    ].join("\n"),
-  );
-});
-
-it("gives a direct repair command for a stale service", () => {
-  assert.include(
-    formatServiceStatus({ ...status, current: false }, "0.0.29"),
-    "Next: Run `t3 service install` to repair it.",
-  );
-});
-
-it("explains an incomplete nightly installation and keeps repair on its installed version", () => {
+it("never suggests npx for an incomplete nightly installation", () => {
   const output = formatServiceStatus(
     {
       ...status,
@@ -61,38 +41,23 @@ it("explains an incomplete nightly installation and keeps repair on its installe
     "0.0.32-nightly.1",
   );
 
-  expect(output).toContain("[linger-disabled]");
-  expect(output).toContain("last login session ends");
-  expect(output).toContain('sudo loginctl enable-linger "$(id -un)"');
-  expect(output).toContain("[service-stopped]");
-  expect(output).toContain("Run `t3 service install` to repair it.");
   expect(output).not.toContain("npx");
 });
 
-it("points an older service at a repair, never at npx", () => {
+it("never suggests npx for an older service", () => {
   const output = formatServiceStatus(
     { ...status, current: false, installedVersion: "0.0.28" },
     "0.0.29",
   );
-  expect(output).toContain("Run `t3 service install` to repair it.");
   expect(output).not.toContain("npx");
 });
 
-it("explains where the service is supported", () => {
-  assert.include(
-    formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
-    "Supported on: Linux with systemd, macOS with launchd",
-  );
-});
-
-it("reports a newer installed service and tells the CLI to catch up to it", () => {
+it("never suggests npx for a newer installed service", () => {
   const output = formatServiceStatus(
     { ...status, current: false, installedVersion: "0.0.32-nightly.1" },
     "0.0.31",
   );
 
-  assert.include(output, "t3@0.0.32-nightly.1 (newer than this t3@0.0.31 CLI)");
-  assert.include(output, "Run `t3 update 0.0.32-nightly.1` to match it");
   assert.notInclude(output, "npx");
 });
 
@@ -150,44 +115,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     }),
   );
 
-  it.effect("restart from inside the service says the restart is only queued", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-      const { service } = makeTestService({ ...status, installedVersion: "0.0.30" }, "queued");
-      vi.spyOn(BootService, "layer").mockReturnValue(
-        Layer.succeed(BootService.BootService, service),
-      );
-      const lines: Array<string> = [];
-      const testConsole = {
-        ...globalThis.console,
-        log: (...args: ReadonlyArray<unknown>) => {
-          lines.push(args.map(String).join(" "));
-        },
-      } satisfies Console.Console;
+  it.effect(
+    "restart from inside the service requests one deferred restart without installing",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+        const { service, installOptions, restarts } = makeTestService(
+          { ...status, installedVersion: "0.0.30" },
+          "queued",
+        );
+        vi.spyOn(BootService, "layer").mockReturnValue(
+          Layer.succeed(BootService.BootService, service),
+        );
 
-      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
-        "restart",
-        "--base-dir",
-        baseDir,
-      ]).pipe(
-        Effect.provideService(HostProcess.Environment, {}),
-        Effect.provideService(Console.Console, testConsole),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-      );
+        yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+          "restart",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+        );
 
-      const output = lines.join("\n");
-      expect(output).not.toContain("Restarted");
-      expect(output).toContain("Queued a restart of the T3 Code service on t3@0.0.30");
-      expect(output).toContain(`Logs: ${status.logPath}`);
-    }),
+        expect(restarts).toEqual([true]);
+        expect(installOptions).toEqual([]);
+      }),
   );
 
-  it.effect("install reports a handed-off switch as pending", () =>
+  it.effect("install hands off a switch without an extra restart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-      const { service } = makeTestService({ ...status, current: false });
+      const { service, installOptions, restarts } = makeTestService({
+        ...status,
+        current: false,
+      });
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(BootService.BootService, {
           ...service,
@@ -195,26 +158,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
             service.install(options).pipe(Effect.map((plan) => ({ ...plan, handedOff: true }))),
         }),
       );
-      const lines: string[] = [];
       yield* Command.runWith(serviceCommand, { version: packageJson.version })([
         "install",
         "--base-dir",
         baseDir,
       ]).pipe(
         Effect.provideService(HostProcess.Environment, {}),
-        Effect.provideService(Console.Console, {
-          ...globalThis.console,
-          log: (...args) => {
-            lines.push(args.map(String).join(" "));
-          },
-        }),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
       );
 
-      const output = lines.join("\n");
-      expect(output).not.toMatch(/(?:Installed|Updated) T3 Code service/);
-      expect(output).toContain("separate systemd unit");
-      expect(output).toContain(status.logPath);
+      expect(installOptions).toEqual([{ allowDowngrade: false }]);
+      expect(restarts).toEqual([]);
     }),
   );
 

@@ -1,6 +1,7 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
+  type MatrixAnswer,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -136,6 +137,13 @@ export type TimelineEntry = (
       readonly kind: "proposed-plan";
       readonly createdAt: string;
       readonly proposedPlan: ProposedPlan;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "matrix-answer";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly answer: MatrixAnswer;
     }
   | {
       readonly id: string;
@@ -719,6 +727,18 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         message,
         projectedItem: row,
+        ...attemptMetadata,
+      });
+      continue;
+    }
+
+    if (item.type === "matrix_answer") {
+      entries.push({
+        id: item.id,
+        kind: "matrix-answer",
+        createdAt,
+        runId: item.runId,
+        answer: item.answer,
         ...attemptMetadata,
       });
       continue;

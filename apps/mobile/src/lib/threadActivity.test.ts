@@ -221,6 +221,312 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
   };
 }
 
+it("keeps structured Matrix answers visible through collapsed work and run folds and replaces their revision in place", () => {
+  const answerItem: Extract<OrchestrationV2TurnItem, { type: "matrix_answer" }> = {
+    ...base("financial-answer", "2026-06-20T00:00:02.000Z", 1),
+    type: "matrix_answer",
+    answer: {
+      id: TurnItemId.make("financial-answer"),
+      threadId,
+      revision: 1,
+      pinned: false,
+      createdAt: "2026-06-20T00:00:02.000Z",
+      updatedAt: "2026-06-20T00:00:02.000Z",
+      spec: {
+        title: "Revenue",
+        summary: "Reported revenue",
+        level: "guided",
+        symbols: [],
+        blocks: [{ id: "explanation", kind: "explanation", title: "Scope", text: "No estimates." }],
+      },
+      companies: [],
+    },
+  };
+  const rows = [
+    projected(userMessage(), 0),
+    projected(command(), 1),
+    projected(answerItem, 2),
+    projected(assistantMessage("2026-06-20T00:00:03.000Z"), 3),
+    projected({ ...command(), id: TurnItemId.make("second-command") }, 4),
+    projected(
+      {
+        ...assistantMessage("2026-06-20T00:00:05.000Z"),
+        id: TurnItemId.make("final-message"),
+        messageId: MessageId.make("final-message"),
+      },
+      5,
+    ),
+  ];
+  const cache = createThreadFeedCache();
+  const before = buildThreadFeed(rows, { cache });
+  for (const expanded of [new Set<RunId>(), new Set([runId])]) {
+    const presented = deriveThreadFeedPresentation(before, null, expanded);
+    expect(presented.filter((entry) => entry.type === "matrix-answer")).toHaveLength(1);
+    expect(presented.find((entry) => entry.type === "matrix-answer")).toMatchObject({
+      answer: { revision: 1 },
+    });
+  }
+  const replacement = {
+    ...answerItem,
+    answer: {
+      ...answerItem.answer,
+      revision: 2,
+      pinned: true,
+      spec: { ...answerItem.answer.spec, title: "Updated revenue" },
+    },
+  };
+  const after = buildThreadFeed(
+    rows.map((row) => (row.item.id === replacement.id ? { ...row, item: replacement } : row)),
+    { cache },
+  );
+  const beforeAnswer = before.find((entry) => entry.type === "matrix-answer");
+  const afterAnswer = after.find((entry) => entry.type === "matrix-answer");
+  expect(afterAnswer?.id).toBe(beforeAnswer?.id);
+  expect(afterAnswer).toMatchObject({
+    answer: { revision: 2, pinned: true, spec: { title: "Updated revenue" } },
+  });
+  expect(after.filter((entry) => entry.type === "matrix-answer")).toHaveLength(1);
+});
+
+describe("adaptive research response delivery", () => {
+  const latestRun = RunId.make("follow-up");
+  const otherRun = RunId.make("text-only");
+  const answerItem: Extract<OrchestrationV2TurnItem, { type: "matrix_answer" }> = {
+    ...base("adaptive-answer", "2026-06-20T00:00:02.000Z", 1),
+    type: "matrix_answer",
+    answer: {
+      id: TurnItemId.make("adaptive-answer"),
+      threadId,
+      revision: 1,
+      pinned: false,
+      createdAt: "2026-06-20T00:00:02.000Z",
+      updatedAt: "2026-06-20T00:00:02.000Z",
+      spec: {
+        title: "Company",
+        summary: "Overview",
+        level: "guided",
+        symbols: [],
+        blocks: [{ id: "company", kind: "company" }],
+      },
+      companies: [],
+    },
+  };
+  const originalUser = projected(userMessage(), 0);
+  const originalNotes = projected({ ...assistantMessage(), text: "Original explanation" }, 2);
+  const followupUser = projected(
+    {
+      ...userMessage("2026-06-20T00:00:05.000Z"),
+      id: TurnItemId.make("followup-user"),
+      messageId: MessageId.make("followup-user"),
+      runId: latestRun,
+      text: "What are the risks?",
+    },
+    3,
+  );
+  const followupNotes = projected(
+    {
+      ...assistantMessage("2026-06-20T00:00:06.000Z"),
+      id: TurnItemId.make("followup-notes"),
+      messageId: MessageId.make("followup-notes"),
+      runId: latestRun,
+      text: "Risk explanation",
+      streaming: true,
+    },
+    4,
+  );
+  const updated = {
+    ...answerItem,
+    answer: { ...answerItem.answer, revision: 2, lastPresentedRunId: latestRun },
+  };
+
+  it("presents a revised answer once in the follow-up turn and retains both essays as notes", () => {
+    const rows = [originalUser, projected(updated, 1), originalNotes, followupUser, followupNotes];
+    const feed = buildThreadFeed(rows);
+    expect(feed.map((entry) => entry.type)).toEqual(["message", "message", "matrix-answer"]);
+    expect(feed[1]).toMatchObject({ message: { role: "user", text: "What are the risks?" } });
+    expect(feed[2]).toMatchObject({
+      runId: latestRun,
+      answer: { revision: 2 },
+      additionalNotes: [
+        { text: "Original explanation" },
+        { text: "Risk explanation", streaming: true },
+      ],
+    });
+    expect(rows[1]?.item.runId).toBe(runId);
+    expect(rows[1]?.sourceItemId).toBe(answerItem.id);
+  });
+
+  it("does not compact text-only or paged messages when their answer is not loaded", () => {
+    const feed = buildThreadFeed([followupUser, followupNotes]);
+    expect(feed.map((entry) => entry.type)).toEqual(["message", "message"]);
+    expect(feed[1]).toMatchObject({ message: { text: "Risk explanation", streaming: true } });
+    const paged = buildThreadFeed([projected(updated, 1), followupUser, followupNotes]);
+    expect(paged.filter((entry) => entry.type === "matrix-answer")).toHaveLength(1);
+    expect(paged.at(-1)).toMatchObject({
+      type: "matrix-answer",
+      additionalNotes: [{ text: "Risk explanation" }],
+    });
+  });
+
+  it("retains full assistant markdown and attachments inside notes instead of throwing away content", () => {
+    const attachment = {
+      type: "file" as const,
+      id: "research-file",
+      name: "sources.csv",
+      mimeType: "text/csv",
+      sizeBytes: 20,
+    };
+    const message = {
+      ...assistantMessage(),
+      text: "**Full explanation**\n\n[Source](https://sec.gov/)",
+      attachments: [attachment],
+    };
+    const feed = buildThreadFeed([originalUser, projected(answerItem, 1), projected(message, 2)]);
+    const answer = feed.find((entry) => entry.type === "matrix-answer");
+    expect(feed.map((entry) => entry.type)).toEqual(["message", "matrix-answer"]);
+    expect(answer?.additionalNotes?.[0]?.text).toBe(message.text);
+    expect(answer?.additionalNotes?.[0]?.attachments).toEqual([attachment]);
+    expect(answer?.additionalNotes?.[0]?.projectedItem?.sourceItemId).toBe(message.id);
+  });
+
+  it("deduplicates replayed answer revisions and assigns shared-run notes only once", () => {
+    const second: typeof updated = {
+      ...updated,
+      id: TurnItemId.make("second-answer"),
+      answer: { ...updated.answer, id: TurnItemId.make("second-answer") },
+    };
+    const feed = buildThreadFeed([
+      originalUser,
+      projected(answerItem, 1),
+      projected(updated, 2),
+      originalNotes,
+      followupUser,
+      projected(second, 4),
+      followupNotes,
+    ]);
+    const answers = feed.filter((entry) => entry.type === "matrix-answer");
+    expect(answers).toHaveLength(2);
+    expect(answers[0]?.answer.revision).toBe(2);
+    expect(answers[0]?.additionalNotes).toEqual([]);
+    expect(answers[1]?.additionalNotes?.map((note) => note.text)).toEqual([
+      "Original explanation",
+      "Risk explanation",
+    ]);
+  });
+
+  it("keeps users, errors, approvals and unrelated text beside the primary answer", () => {
+    const error = projected(
+      {
+        ...base("research-error", "2026-06-20T00:00:07.000Z", 6),
+        type: "error",
+        runId: latestRun,
+        failure: {
+          class: "provider_error",
+          message: "Source unavailable",
+          code: null,
+          retryable: null,
+        },
+      },
+      6,
+    );
+    const approval = projected(
+      {
+        ...base("research-approval", "2026-06-20T00:00:08.000Z", 7),
+        type: "approval_request",
+        runId: latestRun,
+        requestId: RuntimeRequestId.make("research-approval"),
+        requestKind: "command",
+        prompt: "Allow command?",
+      },
+      7,
+    );
+    const unrelated = projected(
+      {
+        ...assistantMessage(),
+        id: TurnItemId.make("other"),
+        messageId: MessageId.make("other"),
+        runId: otherRun,
+        text: "Ordinary text-only answer",
+      },
+      8,
+    );
+    const feed = buildThreadFeed([
+      originalUser,
+      projected(updated, 1),
+      originalNotes,
+      followupUser,
+      followupNotes,
+      error,
+      approval,
+      unrelated,
+    ]);
+    expect(
+      feed.filter((entry) => entry.type === "message").map((entry) => entry.message.text),
+    ).toEqual(["Run checks", "What are the risks?", "Ordinary text-only answer"]);
+    expect(
+      feed.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? entry.activities.map((activity) => activity.projectedItem.item.type)
+          : [],
+      ),
+    ).toEqual(["error", "approval_request"]);
+  });
+
+  it("updates cached live notes and presentation ownership without duplicating the document or moving it on pin", () => {
+    const cache = createThreadFeedCache();
+    const rows = [
+      originalUser,
+      projected(answerItem, 1),
+      originalNotes,
+      followupUser,
+      followupNotes,
+    ];
+    const initial = buildThreadFeed(rows, { cache });
+    expect(initial.findIndex((entry) => entry.type === "matrix-answer")).toBeLessThan(
+      initial.findIndex((entry) => entry.id === "followup-user"),
+    );
+    const revisedRows = rows.map((row) =>
+      row.item.id === answerItem.id ? { ...row, item: updated } : row,
+    );
+    const revised = buildThreadFeed(revisedRows, { cache });
+    if (followupNotes.item.type !== "assistant_message")
+      throw new Error("Expected assistant notes");
+    const finalNotes = {
+      ...followupNotes,
+      item: {
+        ...followupNotes.item,
+        type: "assistant_message" as const,
+        messageId: MessageId.make("followup-notes"),
+        text: "Final risk explanation",
+        streaming: false,
+      },
+    };
+    const finalRows = revisedRows.map((row) => (row === followupNotes ? finalNotes : row));
+    const completed = buildThreadFeed(finalRows, { cache });
+    expect(completed.at(-1)).toMatchObject({
+      type: "matrix-answer",
+      additionalNotes: [
+        { text: "Original explanation" },
+        { text: "Final risk explanation", streaming: false },
+      ],
+    });
+    const pinned = buildThreadFeed(
+      finalRows.map((row) =>
+        row.item.id === answerItem.id
+          ? {
+              ...row,
+              item: { ...updated, answer: { ...updated.answer, revision: 3, pinned: true } },
+            }
+          : row,
+      ),
+      { cache },
+    );
+    expect(pinned.at(-1)?.id).toBe(revised.at(-1)?.id);
+    expect(pinned.filter((entry) => entry.type === "matrix-answer")).toHaveLength(1);
+    expect(pinned.at(-1)).toMatchObject({ runId: latestRun, answer: { pinned: true } });
+  });
+});
+
 describe("buildThreadFeed", () => {
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");

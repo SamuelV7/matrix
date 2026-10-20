@@ -3,6 +3,7 @@ import {
   isThreadWokeUnseen,
   mergeDirectPreviewAnnotation,
   resolveVisibleWorktreeSetup,
+  researchQuestionAction,
 } from "./ChatView.logic";
 import {
   recallCheckoutIsRepo,
@@ -108,6 +109,27 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("research follow-up submission", () => {
+  it("sends an explicit research question only into an empty, unblocked composer", () => {
+    expect(
+      researchQuestionAction({
+        hasDraft: false,
+        hasPendingRequest: false,
+        editingQueuedRun: false,
+      }),
+    ).toBe("send");
+  });
+
+  it.each([
+    { hasDraft: true, hasPendingRequest: false, editingQueuedRun: false },
+    { hasDraft: false, hasPendingRequest: true, editingQueuedRun: false },
+    { hasDraft: false, hasPendingRequest: false, editingQueuedRun: true },
+    { hasDraft: true, hasPendingRequest: true, editingQueuedRun: true },
+  ])("stages the question without submitting existing input: %j", (state) => {
+    expect(researchQuestionAction(state)).toBe("stage");
+  });
+});
 const helloWorldTemplate: CodexArtifactTemplate = {
   artifactKind: "document",
   displayName: "Hello World",

@@ -18,6 +18,8 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  MatrixAnswerError,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -522,5 +524,48 @@ it.effect("denies manual cleanup before the handler without settings permission"
       requiredPermission: AuthSettingsWriteScope,
     });
     expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("denies saving research focus before the handler for read-only sessions", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.matrixSetAnswerView
+        > => tag !== WS_METHODS.matrixSetAnswerView,
+      ),
+    );
+    let handled = 0;
+    const handler = group.toLayerHandler(WS_METHODS.matrixSetAnswerView, () =>
+      Effect.sync(() => {
+        handled++;
+      }).pipe(Effect.andThen(Effect.fail(new MatrixAnswerError({ reason: "not_found" })))),
+    );
+    const input = {
+      threadId: ThreadId.make("thread:research"),
+      answerId: TurnItemId.make("answer:research"),
+      expectedRevision: 1,
+      datasetId: "crop",
+      view: { entities: ["BRA"], year: 2023, measure: "production" },
+    };
+    const reader = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+    );
+    expect(yield* reader[WS_METHODS.matrixSetAnswerView](input).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(handled).toBe(0);
+    const operator = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
+    );
+    expect(yield* operator[WS_METHODS.matrixSetAnswerView](input).pipe(Effect.flip)).toMatchObject({
+      _tag: "MatrixAnswerError",
+      reason: "not_found",
+    });
+    expect(handled).toBe(1);
   }).pipe(Effect.scoped),
 );

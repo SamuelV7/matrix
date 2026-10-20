@@ -118,7 +118,7 @@ describe("macOS boundary navigation", () => {
 
   const markdown = String.raw`Fixed the top padding to 16px and updated the offline index and ZIP.
 
-**Yes: [HW08, problem 6, page 2](/Users/yashsingh/.t3/scratch/2026-10-16-gather-all-info-about-the-2fcd52f5/calculus-resources/files/HW08.pdf)** asks for the absolute maximum and minimum of
+**Yes: [HW08, problem 6, page 2](/Users/yashsingh/.matrix/scratch/2026-10-16-gather-all-info-about-the-2fcd52f5/calculus-resources/files/HW08.pdf)** asks for the absolute maximum and minimum of
 \[
 f(x,y)=2x^2+y^2,\qquad x^2+y^2\le16.
 \]

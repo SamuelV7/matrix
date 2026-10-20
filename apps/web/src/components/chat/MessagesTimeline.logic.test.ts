@@ -56,6 +56,7 @@ import {
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
 } from "./MessagesTimeline.logic";
+import { matrixAnswerPresentation } from "./MessagesTimeline.logic";
 import type { WorkLogEntry } from "../../session-logic";
 
 describe("expanded tool group scrolling", () => {
@@ -5763,5 +5764,260 @@ describe("timeline end and minimap geometry", () => {
     for (const width of [0, 14, 40]) {
       expect(resolveTimelineMinimapInteractiveWidth(width, true)).toBe("22rem");
     }
+  });
+});
+
+describe("primary Matrix answer presentation", () => {
+  const createdAt = "2026-10-20T12:00:00Z";
+  const originalRun = RunId.make("research-original");
+  const latestRun = RunId.make("research-follow-up");
+  const otherRun = RunId.make("unrelated-text-chat");
+  const answer: Extract<TimelineEntry, { kind: "matrix-answer" }>["answer"] = {
+    id: TurnItemId.make("saved-answer"),
+    threadId: ThreadId.make("research-thread"),
+    revision: 1,
+    pinned: false,
+    createdAt,
+    updatedAt: createdAt,
+    spec: {
+      title: "Company overview",
+      summary: "An interpretation of the business.",
+      symbols: ["AAPL"],
+      level: "guided",
+      blocks: [{ id: "context", kind: "explanation", title: "Business", text: "Context" }],
+    },
+    companies: [],
+  };
+  const card = (value = answer): Extract<TimelineEntry, { kind: "matrix-answer" }> => ({
+    kind: "matrix-answer",
+    id: value.id,
+    createdAt,
+    runId: originalRun,
+    answer: value,
+  });
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    runId: RunId | null,
+    overrides: Partial<Extract<TimelineEntry, { kind: "message" }>["message"]> = {},
+  ): Extract<TimelineEntry, { kind: "message" }> => ({
+    kind: "message",
+    id,
+    createdAt,
+    message: {
+      id: MessageId.make(id),
+      role,
+      runId,
+      text: `**${id}**`,
+      streaming: false,
+      createdAt,
+      updatedAt: createdAt,
+      ...overrides,
+    },
+  });
+  const input = (timelineEntries: ReadonlyArray<TimelineEntry>) => ({
+    timelineEntries,
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+
+  it("makes legacy loaded answers the primary response and preserves all same-run prose as notes", () => {
+    const before = message("preface", "assistant", originalRun);
+    const after = message("final-essay", "assistant", originalRun);
+    const rows = deriveMessagesTimelineRows(
+      input([
+        message("question", "user", originalRun),
+        before,
+        card(),
+        after,
+        message("text-only", "assistant", otherRun),
+        message("runless-text", "assistant", null),
+      ]),
+    );
+    expect(rows.map((row) => row.id)).toEqual(["question", answer.id, "text-only", "runless-text"]);
+    const primary = rows.find((row) => row.kind === "matrix-answer");
+    expect(primary?.kind).toBe("matrix-answer");
+    if (primary?.kind !== "matrix-answer") throw new Error("Missing primary answer");
+    expect(primary.additionalNotes?.map((note) => note.message)).toEqual([
+      before.message,
+      after.message,
+    ]);
+    expect(primary.additionalNotes?.every((note) => note.showAssistantCopyButton)).toBe(true);
+  });
+
+  it("presents an update once at the follow-up tail without mutating its durable anchor", () => {
+    const stored = card({ ...answer, revision: 2, lastPresentedRunId: latestRun });
+    const entries = [
+      message("original-question", "user", originalRun),
+      stored,
+      message("original-essay", "assistant", originalRun),
+      message("other-question", "user", otherRun),
+      message("other-response", "assistant", otherRun),
+      message("follow-up", "user", latestRun),
+      message("updated-essay", "assistant", latestRun, { updatedAt: "2026-10-20T12:05:00Z" }),
+    ];
+    const rows = deriveMessagesTimelineRows(input(entries));
+    expect(rows.map((row) => row.id)).toEqual([
+      "original-question",
+      "other-question",
+      "other-response",
+      "follow-up",
+      answer.id,
+    ]);
+    const primary = rows.at(-1);
+    if (primary?.kind !== "matrix-answer") throw new Error("Missing updated answer");
+    expect(primary.additionalNotes?.map((note) => note.id)).toEqual([
+      "original-essay",
+      "updated-essay",
+    ]);
+    expect(primary.answer).toBe(stored.answer);
+    expect(primary.createdAt).toBe("2026-10-20T12:05:00Z");
+    expect(entries[1]).toBe(stored);
+    expect(stored.runId).toBe(originalRun);
+    expect(stored.createdAt).toBe(answer.createdAt);
+    const pinned = deriveMessagesTimelineRows(
+      input(
+        entries.map((entry) =>
+          entry === stored ? card({ ...stored.answer, pinned: true, revision: 3 }) : entry,
+        ),
+      ),
+    );
+    expect(pinned.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+  });
+
+  it("keeps multiple answers while assigning shared-run notes exactly once", () => {
+    const second = { ...answer, id: TurnItemId.make("second-answer") };
+    const rows = deriveMessagesTimelineRows(
+      input([
+        message("question", "user", originalRun),
+        card(),
+        card(second),
+        message("shared-notes", "assistant", originalRun),
+      ]),
+    );
+    const answers = rows.filter((row) => row.kind === "matrix-answer");
+    expect(answers.map((row) => row.id)).toEqual([answer.id, second.id]);
+    expect(answers.flatMap((row) => row.additionalNotes ?? []).map((note) => note.id)).toEqual([
+      "shared-notes",
+    ]);
+  });
+
+  it("never hides prose when paging omitted the answer, and keeps the anchor if its presenting run is absent", () => {
+    const prose = message("loaded-follow-up-prose", "assistant", latestRun);
+    expect(deriveMessagesTimelineRows(input([prose])).map((row) => row.id)).toEqual([prose.id]);
+    const stored = card({ ...answer, lastPresentedRunId: latestRun });
+    const presentation = matrixAnswerPresentation([
+      stored,
+      message("unrelated", "assistant", otherRun),
+    ]);
+    expect(presentation.entries.map((entry) => entry.id)).toEqual([answer.id, "unrelated"]);
+    expect(presentation.notesByAnswerId.size).toBe(0);
+  });
+
+  it("preserves user input, failures, approvals and assistant attachments rather than treating them as notes", () => {
+    const user = message("user", "user", originalRun);
+    const attached = message("attachment", "assistant", originalRun, {
+      attachments: [
+        { type: "image", id: "image", name: "chart.png", mimeType: "image/png", sizeBytes: 1 },
+      ],
+    });
+    const failure: TimelineEntry = {
+      kind: "work",
+      id: "failure",
+      createdAt,
+      entry: {
+        id: "failure",
+        createdAt,
+        runId: originalRun,
+        label: "Request failed",
+        tone: "error",
+      },
+    };
+    const approval: TimelineEntry = {
+      kind: "work",
+      id: "approval",
+      createdAt,
+      entry: {
+        id: "approval",
+        createdAt,
+        runId: originalRun,
+        label: "Permission required",
+        tone: "info",
+        itemType: "system_notice",
+      },
+    };
+    const presentation = matrixAnswerPresentation([user, card(), attached, failure, approval]);
+    expect(presentation.entries.map((entry) => entry.id)).toEqual([
+      "user",
+      "attachment",
+      "failure",
+      "approval",
+      answer.id,
+    ]);
+    expect(presentation.notesByAnswerId.size).toBe(0);
+    const rows = deriveMessagesTimelineRows(input([user, card(), attached, failure, approval]));
+    const answerIndex = rows.findIndex((row) => row.kind === "matrix-answer");
+    for (const id of ["user", "attachment", "failure", "approval"]) {
+      const index = rows.findIndex((row) => row.id === id);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(answerIndex);
+    }
+  });
+
+  it("deduplicates loaded revisions without duplicating their notes", () => {
+    const updated = { ...answer, revision: 2, lastPresentedRunId: latestRun };
+    const rows = deriveMessagesTimelineRows(
+      input([card(), card(updated), message("follow-up-notes", "assistant", latestRun)]),
+    );
+    expect(rows).toHaveLength(1);
+    const primary = rows[0];
+    if (primary?.kind !== "matrix-answer") throw new Error("Missing answer");
+    expect(primary.answer).toBe(updated);
+    expect(primary.additionalNotes?.map((note) => note.id)).toEqual(["follow-up-notes"]);
+  });
+
+  it("updates nested streaming notes through the row cache without stale text or duplicate rows", () => {
+    const streaming = message("streaming-notes", "assistant", originalRun, {
+      text: "First",
+      streaming: true,
+    });
+    const entries = [message("question", "user", originalRun), card(), streaming];
+    const before = deriveMessagesTimelineRowsWithState(input(entries));
+    const appended = {
+      ...streaming,
+      message: {
+        ...streaming.message,
+        text: "First and second",
+        updatedAt: "2026-10-20T12:00:01Z",
+      },
+    };
+    const after = deriveMessagesTimelineRowsWithState(
+      input([entries[0]!, entries[1]!, appended]),
+      before,
+    );
+    expect(after.rows.map((row) => row.id)).toEqual(["question", answer.id]);
+    expect(after.rows[0]).toBe(before.rows[0]);
+    const primary = after.rows[1];
+    if (primary?.kind !== "matrix-answer") throw new Error("Missing streaming answer");
+    expect(primary.additionalNotes?.[0]?.message.text).toBe("First and second");
+    const stableBefore = computeStableMessagesTimelineRows(before.rows, {
+      byId: new Map(),
+      result: [],
+    });
+    const stableAfter = computeStableMessagesTimelineRows(after.rows, stableBefore);
+    expect(stableAfter.result[1]).not.toBe(stableBefore.result[1]);
+    const settled = deriveMessagesTimelineRowsWithState(
+      input([
+        entries[0]!,
+        entries[1]!,
+        { ...appended, message: { ...appended.message, streaming: false } },
+      ]),
+      after,
+    );
+    const completed = settled.rows[1];
+    if (completed?.kind !== "matrix-answer") throw new Error("Missing settled answer");
+    expect(completed.additionalNotes?.[0]?.message.streaming).toBe(false);
+    expect(settled.rows.map((row) => row.id)).toEqual(["question", answer.id]);
   });
 });

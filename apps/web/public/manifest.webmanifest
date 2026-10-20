@@ -1,7 +1,8 @@
 {
   "id": "/",
-  "name": "T3 Code",
-  "short_name": "T3 Code",
+  "name": "Matrix",
+  "short_name": "Matrix",
+  "description": "An agentic financial research workspace.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

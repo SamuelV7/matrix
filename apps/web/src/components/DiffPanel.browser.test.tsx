@@ -118,7 +118,7 @@ let root: Root;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  localStorage.setItem("t3code.diffFileTreeOpen", "true");
+  localStorage.setItem("matrix.diffFileTreeOpen", "true");
   useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
   registry = AtomRegistry.make();
   container = document.createElement("div");

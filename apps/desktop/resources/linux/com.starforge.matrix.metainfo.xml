@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.starforge.matrix</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Matrix</name>
+  <summary>Agentic financial research workspace</summary>
+  <developer id="com.starforge">
+    <name>Matrix contributors</name>
+  </developer>
+  <description>
+    <p>
+      Matrix is a financial research workspace with connected coding agents,
+      source-linked company filings, and tools for investigating markets.
+    </p>
+    <p>
+      Connect from desktop, web, or mobile to continue working remotely.
+    </p>
+  </description>
+  <launchable type="desktop-id">matrix.desktop</launchable>
+  <icon type="stock">matrix</icon>
+  <provides>
+    <binary>matrix</binary>
+  </provides>
+  <categories>
+    <category>Finance</category>
+  </categories>
+</component>

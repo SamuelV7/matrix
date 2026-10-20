@@ -1,7 +1,10 @@
 const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
-export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
+export const CLI_RELEASE_BASE_URL_ENV = "MATRIX_RELEASE_BASE_URL";
+
+export const CLI_DISTRIBUTION_DISABLED_REASON =
+  "Automatic installation and updates are disabled in Matrix. Build and install Matrix from this checkout; upstream T3 Code releases are not compatible.";
 
 /**
  * Kept in step with the build_linux_cli matrix, build_windows_arm64_cli, and

@@ -3,6 +3,26 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./matrixResearch": {
+      "types": "./src/matrixResearch.ts",
+      "import": "./src/matrixResearch.ts"
+    },
+    "./matrixWorldMap": {
+      "types": "./src/matrixWorldMap.ts",
+      "import": "./src/matrixWorldMap.ts"
+    },
+    "./matrixAnswerLayout": {
+      "types": "./src/matrixAnswerLayout.ts",
+      "import": "./src/matrixAnswerLayout.ts"
+    },
+    "./matrixAnswerHistory": {
+      "types": "./src/matrixAnswerHistory.ts",
+      "import": "./src/matrixAnswerHistory.ts"
+    },
+    "./matrixAnnualTrend": {
+      "types": "./src/matrixAnnualTrend.ts",
+      "import": "./src/matrixAnnualTrend.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { AuthSessionState, type EnvironmentId, type ServerInstallation } from "@t3tools/contracts";
+import { AuthSessionState, type EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -209,45 +209,12 @@ describe("ServerUpdateAction", () => {
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      { kind: "npm-global", prefix: "/opt/node" },
-      "Copy update command",
-      "npm install --global --prefix '/opt/node' t3@0.0.45",
-      "Update command copied",
-      "then restart t3",
-    ],
-    [
-      { kind: "npx" },
-      "Copy relaunch command",
-      "npx t3@0.0.45",
-      "Relaunch command copied",
-      "This does not update an installed t3 command.",
-    ],
-    [
-      undefined,
-      "Copy relaunch command",
-      "npx t3@0.0.45",
-      "Relaunch command copied",
-      "This does not update an installed t3 command.",
-    ],
-  ] satisfies ReadonlyArray<
-    readonly [ServerInstallation | undefined, string, string, string, string]
-  >)(
-    "copies an honest manual command for %j without invoking remote update",
-    async (installation, label, command, title, guidance) => {
-      await renderAction({ selfUpdate: null, installation, targetVersion: "0.0.45" });
-      await click(label);
-      expect(testState.clipboard).toHaveBeenCalledWith(command);
-      expect(testState.toast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title,
-          description: expect.stringContaining(guidance),
-        }),
-      );
-      expect(testState.updateServer).not.toHaveBeenCalled();
-    },
-  );
+  it("does not offer official package installation when remote updates are unavailable", async () => {
+    await renderAction({ selfUpdate: null, targetVersion: "0.0.45" });
+    expect(button()).toBeUndefined();
+    expect(testState.clipboard).not.toHaveBeenCalled();
+    expect(testState.updateServer).not.toHaveBeenCalled();
+  });
 
   it("reports success only after the shared update flow reconnects", async () => {
     testState.updateServer.mockResolvedValue(success());

@@ -22,7 +22,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About T3 Code">
+    <SettingsScreen title="About Matrix">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -136,6 +136,10 @@ function AppSettingsSection() {
       ) : (
         versionRow
       )}
+      <Text className="px-4 text-sm text-foreground-muted">
+        Automatic updates are disabled in Matrix. Install a Matrix build manually; upstream T3 Code
+        releases are not compatible.
+      </Text>
     </SettingsSection>
   );
 }

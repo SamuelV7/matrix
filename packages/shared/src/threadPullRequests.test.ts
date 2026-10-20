@@ -166,7 +166,7 @@ describe("legacyLinkedPullRequestOf", () => {
     locator: {
       source: "git-remote" as const,
       remoteName: "origin",
-      remoteUrl: "https://github.com/pingdotgg/t3code.git",
+      remoteUrl: "https://github.com/pingdotgg/matrix.git",
     },
   };
   it("projects only links the owning project can route without a host", () => {

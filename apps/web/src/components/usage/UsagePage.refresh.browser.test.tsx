@@ -75,7 +75,7 @@ vi.mock(import("../../state/usage"), async (original) => {
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { UsagePage } from "./UsagePage";
 
-const PREFERENCES_KEY = "t3code:usage-page-preferences:v1";
+const PREFERENCES_KEY = "matrix:usage-page-preferences:v1";
 let root: Root;
 let container: HTMLDivElement;
 // Limits refreshes are throttled per environment for the whole session, so each test

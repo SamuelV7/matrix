@@ -5,6 +5,14 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  MatrixAnswer,
+  MatrixAnswerError,
+  MatrixSetAnswerPinnedInput,
+  MatrixWorkspace,
+  MatrixWorkspaceInput,
+} from "./matrixAnswer.ts";
+import { MatrixSetAnswerViewInput } from "./matrixResearch.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -470,6 +478,11 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  matrixGetWorkspace: "matrix.getWorkspace",
+  matrixSubscribeWorkspace: "matrix.subscribeWorkspace",
+  matrixSetAnswerPinned: "matrix.setAnswerPinned",
+  matrixSetAnswerView: "matrix.setAnswerView",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -768,6 +781,31 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsMatrixGetWorkspaceRpc = Rpc.make(WS_METHODS.matrixGetWorkspace, {
+  payload: MatrixWorkspaceInput,
+  success: MatrixWorkspace,
+  error: Schema.Union([MatrixAnswerError, EnvironmentAuthorizationError]),
+});
+
+const WsMatrixSubscribeWorkspaceRpc = Rpc.make(WS_METHODS.matrixSubscribeWorkspace, {
+  payload: MatrixWorkspaceInput,
+  success: MatrixWorkspace,
+  error: Schema.Union([MatrixAnswerError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsMatrixSetAnswerPinnedRpc = Rpc.make(WS_METHODS.matrixSetAnswerPinned, {
+  payload: MatrixSetAnswerPinnedInput,
+  success: MatrixAnswer,
+  error: Schema.Union([MatrixAnswerError, EnvironmentAuthorizationError]),
+});
+
+const WsMatrixSetAnswerViewRpc = Rpc.make(WS_METHODS.matrixSetAnswerView, {
+  payload: MatrixSetAnswerViewInput,
+  success: MatrixAnswer,
+  error: Schema.Union([MatrixAnswerError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1880,6 +1918,10 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  WsMatrixGetWorkspaceRpc,
+  WsMatrixSubscribeWorkspaceRpc,
+  WsMatrixSetAnswerPinnedRpc,
+  WsMatrixSetAnswerViewRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

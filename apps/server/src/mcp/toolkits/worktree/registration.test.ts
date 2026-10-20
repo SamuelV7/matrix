@@ -35,6 +35,10 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+import * as SecData from "../../../matrix/SecData.ts";
+import * as ResearchData from "../../../matrix/ResearchData.ts";
+import * as WdiData from "../../../matrix/WdiData.ts";
+import * as AnswerService from "../../../matrix/AnswerService.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -97,6 +101,10 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         ),
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(PreviewBrowser.layer),
+        Layer.provide(AnswerService.layer),
+        Layer.provide(SecData.layer),
+        Layer.provide(ResearchData.layer),
+        Layer.provide(WdiData.layer),
         Layer.provide(layerStubServices),
         Layer.build,
       );

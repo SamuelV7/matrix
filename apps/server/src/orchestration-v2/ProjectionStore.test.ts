@@ -2193,6 +2193,229 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }),
   );
 
+  it.effect(
+    "pages revised Matrix answers with their latest presentation without moving stored anchors",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const iso = DateTime.formatIso(now);
+        const threadId = ThreadId.make("thread:matrix-presentation-pages");
+        const runId = (turn: number) => RunId.make(`run:matrix-pages:${turn}`);
+        yield* store.apply({
+          id: EventId.make("event:matrix-pages:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:matrix-pages"),
+            title: "Company research",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        for (let turn = 1; turn <= 30; turn++) {
+          yield* store.apply({
+            id: EventId.make(`event:matrix-pages:run:${turn}`),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: runId(turn),
+              threadId,
+              ordinal: turn,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:matrix-pages:${turn}`),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* store.apply({
+            id: EventId.make(`event:matrix-pages:input:${turn}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`item:matrix-pages:${turn}`),
+              threadId,
+              runId: runId(turn),
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: turn * 10,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make(`message:matrix-pages:${turn}`),
+              inputIntent: "turn_start",
+              text: `Research ${turn}`,
+              attachments: [],
+            },
+          });
+        }
+        const answers: Array<Extract<OrchestrationV2TurnItem, { type: "matrix_answer" }>> = [];
+        for (let index = 0; index < 8; index++) {
+          const id = TurnItemId.make(`answer:matrix-pages:${index}`);
+          const item: Extract<OrchestrationV2TurnItem, { type: "matrix_answer" }> = {
+            id,
+            threadId,
+            runId: runId(1),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 11 + index,
+            status: "completed",
+            title: "Research",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "matrix_answer",
+            answer: {
+              id,
+              threadId,
+              revision: 2,
+              pinned: index === 0,
+              createdAt: iso,
+              updatedAt: iso,
+              lastPresentedRunId: runId(index === 0 ? 30 : index === 1 ? 15 : 1),
+              spec: {
+                title: "Research",
+                summary: "Interpretation",
+                level: "guided",
+                symbols: [],
+                blocks: [
+                  { id: "context", kind: "explanation", title: "Context", text: "Evidence." },
+                ],
+              },
+              companies: [],
+            },
+          };
+          answers.push(item);
+          yield* store.apply({
+            id: EventId.make(`event:matrix-pages:answer:${index}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: item,
+          });
+        }
+        const pinTime = DateTime.add(now, { minutes: 1 });
+        const pinnedOldAnswer = {
+          ...answers[2]!,
+          updatedAt: pinTime,
+          answer: {
+            ...answers[2]!.answer,
+            revision: 3,
+            pinned: true,
+            updatedAt: DateTime.formatIso(pinTime),
+          },
+        };
+        yield* store.apply({
+          id: EventId.make("event:matrix-pages:pin-old-answer"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: pinTime,
+          payload: pinnedOldAnswer,
+        });
+        const recent = yield* store.getThreadSnapshotWindow(threadId, {
+          rowLimit: 3,
+          userTurnLimit: 1,
+        });
+        assert.deepEqual(
+          recent.projection.turnItems.filter((item) => item.type === "matrix_answer"),
+          [answers[0]],
+        );
+        assert.deepEqual(
+          recent.projection.visibleTurnItems.slice(-2).map((row) => row.item.id),
+          [TurnItemId.make("item:matrix-pages:30"), answers[0]!.id],
+        );
+        const bounded = buildBoundedThreadProjection({
+          projection: recent.projection,
+          snapshotSequence: recent.snapshotSequence,
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: 1 },
+        });
+        assert.deepEqual(
+          bounded.projection.turnItems.filter((item) => item.type === "matrix_answer"),
+          [answers[0]],
+        );
+        const middle = yield* store.getThreadSnapshotWindow(threadId, {
+          rowLimit: 3,
+          userTurnLimit: 1,
+          anchorItemId: TurnItemId.make("item:matrix-pages:15"),
+        });
+        assert.deepEqual(
+          middle.projection.turnItems.filter((item) => item.type === "matrix_answer"),
+          [answers[1]],
+        );
+        assert.deepEqual(
+          middle.projection.visibleTurnItems.slice(-2).map((row) => row.item.id),
+          [TurnItemId.make("item:matrix-pages:15"), answers[1]!.id],
+        );
+        assert.isString(bounded.historyCursor);
+        const older = yield* store.getThreadHistoryPage(threadId, bounded.historyCursor!);
+        assert.deepEqual(
+          older.items.filter((row) => row.item.type === "matrix_answer").map((row) => row.item),
+          [answers[1]!],
+        );
+        const seen = new Set(bounded.projection.visibleTurnItems.map((row) => row.sourceItemId));
+        const answerIds = new Set([answers[0]!.id]);
+        let cursor = bounded.historyCursor;
+        while (cursor) {
+          const page = yield* store.getThreadHistoryPage(threadId, cursor);
+          for (const row of page.items) {
+            assert.isFalse(seen.has(row.sourceItemId), `Duplicate history row ${row.sourceItemId}`);
+            seen.add(row.sourceItemId);
+            if (row.item.type === "matrix_answer") answerIds.add(row.item.id);
+          }
+          assert.notEqual(page.nextCursor, cursor);
+          cursor = page.nextCursor;
+        }
+        assert.equal(answerIds.size, answers.length);
+        assert.deepEqual(
+          yield* store.getTurnItem({ threadId, itemId: pinnedOldAnswer.id }),
+          pinnedOldAnswer,
+        );
+        assert.deepEqual(
+          yield* store.getTurnItem({ threadId, itemId: answers[0]!.id }),
+          answers[0],
+        );
+      }),
+  );
+
   it.effect("reads a fixed SQL turn-item window for long histories and repeated clients", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

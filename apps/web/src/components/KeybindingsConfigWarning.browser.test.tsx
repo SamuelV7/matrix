@@ -58,7 +58,7 @@ const button = () => container.querySelector("button")!;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  localStorage.setItem("t3code:last-editor", JSON.stringify("vscode"));
+  localStorage.setItem("matrix:last-editor", JSON.stringify("vscode"));
   state.sessions.set(
     environmentId,
     Atom.make<SessionResult>(AsyncResult.success(session([AuthOrchestrationOperateScope]))).pipe(

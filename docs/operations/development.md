@@ -2,11 +2,13 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install [Vite+](https://viteplus.dev/guide/), Node 24, and Rust/Cargo. The Matrix launcher
+builds and starts the Rust SEC daemon alongside the application. From the repository root:
 
 ```sh
 vp i
+cp .env.example .env
+# Set SEC_USER_AGENT in .env to Matrix followed by your real contact email.
 vp run dev
 ```
 
@@ -17,29 +19,139 @@ Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Cod
 
 ## Choosing a dev process
 
-Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
-`dev:server` and `dev:web` start those processes separately.
+Use `vp run dev` for the data daemon, server, and web, or `vp run dev:desktop` for the
+data daemon and Electron development client. `dev:server` includes the daemon;
+`dev:web` starts only the renderer and expects a running application server.
 See the [mobile README](../../apps/mobile/README.md) for native builds and Metro.
 
-Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
+Flags go directly after the task name, for example `vp run dev --home-dir /tmp/matrix-dev`.
 Add `--browser` to open a browser automatically.
 
 ### State and ports
 
-Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` wins in both cases.
-Never run a development server against the live `~/.t3/userdata`.
-See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
+The Matrix launcher defaults to per-checkout application state under `~/.matrix/dev/<checkout-id>/`
+and this checkout's ignored `.matrix/sec-cache`. `MATRIX_HOME` changes application state;
+an explicit `--home-dir` takes precedence in both development and production `start` modes.
+`MATRIX_DATA_CACHE_DIR` changes the SEC cache separately. Keep application state outside Git
+checkouts: project-free agent workspaces are intentionally unavailable inside a repository.
+Never point development at another running installation's state.
+`MATRIX_DATA_BIN` selects a prebuilt data executable; otherwise Cargo builds the local daemon.
+Daemon credentials are generated per launch and never sent to the renderer.
+See [test data](../../AGENTS.md#test-data) before copying any existing application database.
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.
+
+### Free-model demo preset
+
+Install OpenCode on `PATH` (the demo uses OpenCode v2; Matrix also supports v1). The Matrix
+launcher initializes `<home>/userdata/settings.json` before starting the application:
+
+- **GLM 5.3 Flash (Free)** — `opencode/glm-5.3-flash-free`, the default for new chats and
+  auxiliary text generation.
+- **DeepSeek V4.1 Flash (Free)** — `opencode/deepseek-v4.1-flash-free`, selectable from the
+  chat model picker. To change future chat or auxiliary defaults, choose it in the corresponding
+  server settings. Explicit selections of either free model survive subsequent launches.
+
+These two OpenCode free endpoints require **no API key or personal subscription**. Free
+availability, capacity, and rate limits are controlled by the upstream service and may change.
+If either endpoint is unavailable, Matrix reports the error rather than falling back to a paid
+model. Other agent instances, including subscription-backed defaults, are disabled on launch;
+the OpenCode provider enforces the exact two-model allowlist for catalogs and requests.
+Existing threads are not rewritten: switch a thread with an old model selection to one of the
+two free models before sending another message.
+
+The preset preserves unrelated settings, an explicit OpenCode disable, custom binary paths,
+and names for the two free models. It replaces incompatible model defaults and prevents
+project overrides from re-enabling other agent instances. Invalid settings stop startup instead
+of reverting to subscription-backed built-ins.
+
+OpenCode configuration, credentials/data, cache, and state are isolated under `<home>/opencode/`;
+the launcher does not modify personal `~/.config/opencode` or `~/.omp` state. Per-instance XDG
+paths and empty inline authentication prevent inheriting personal OpenCode credentials.
+The isolated native `config/opencode/opencode.json` sets the free chat/title model, disables
+OpenCode self-updates, and denies every native provider except `opencode`. This is a native v2
+provider policy, not the v1 provider whitelist that v2 ignores. External OpenCode server URLs
+are cleared so the demo uses its locally spawned, isolated server.
+
+To initialize an already-running Matrix home's settings without launching another server:
+
+```sh
+node scripts/lib/matrix-free-models.ts --home-dir /absolute/path/to/matrix-home
+```
+
+The initializer atomically updates settings for the existing settings-file watcher; it does not
+write the application database. Do not send turns during the change. Restart the existing
+Matrix process after applying it to retire any OpenCode subprocesses started with the old
+environment. Normal future launches initialize the same selected home automatically.
+
+Free does not mean private: prompts, retrieved data, tool output, and attached content sent
+to these models leave the machine for OpenCode/upstream model services. Their current privacy
+and retention terms apply; do not send confidential data without reviewing those terms.
+
+### Interactive research answers
+
+Choose **New research** with either free model and ask normally. For example:
+
+- “Show me global corn output and how it has changed since 2000.”
+- “Compare GDP growth and inflation in Brazil and the United States since 2010.”
+- “Compare access to electricity and renewable electricity generation in India and Brazil.”
+- “Show Microsoft's reported annual revenue and cash flow trends.”
+
+No UI/tool incantation or project selection is required. `/research` starts the same normal
+research-conversation workflow. The agent discovers source capabilities and chooses a useful
+composition; the primary surface is a full research canvas, not a financial lookup or tabbed chat
+card. Conversation remains available for ordinary follow-ups, approvals, errors and attachments.
+Additional agent notes are collapsed rather than replacing the interface.
+
+On a country/year answer, select a country on the map or through accessible search, compare up to
+six entities, change the year or map measure, and inspect linked histories and exact values.
+**World reset** restores the source aggregate. Tables sort and paginate all available rows; they
+compare countries at the selected year, while annual history is shown in series charts. Scatter
+points are paired countries at that same year, not historical years. Quantitative headings, units
+and dates follow the actual view rather than an agent-authored caption.
+
+Wait for **Saving view…** to finish before leaving or reloading. Acknowledged country/year/measure
+focus and **Pin** survive reloads and server restarts. Guided/Analyst detail, readable/exact
+precision and chart display are local controls. Use the answer selector to revisit saved research,
+including answers outside loaded chat history. With an unsent draft or attachment, suggested
+follow-ups are staged instead of silently sending or replacing that content.
+
+After selecting Brazil in the corn workspace, ask “Compare that with drought conditions.”
+The agent must inspect saved focus and revise the same answer. Check the displayed paired year
+and source warnings: annual national SPEI is not crop-area-weighted exposure, current crop
+conditions or proof of causation; World SPEI is unavailable. Missing 2024 drought values must not
+be filled from 2023.
+
+Available sources have explicit boundaries:
+
+- FAO-only corn and wheat production, reported harvested area and yield through OWID, with
+  history through 2024. Harvested area is a source series, not output divided by yield or unique
+  cropland footprint. The displayed FAO/OWID license discrepancy requires review before reuse.
+- Searchable World Bank source-2 indicators across economics, population, health, energy,
+  environment and other available topics. Definitions, units, annual coverage and individual
+  source rights come from metadata; missing observations are not zero.
+- Historical national SPEI from World Bank source 75, with incomplete country/year coverage.
+- Historical annual SEC USD observations and matching-period margin calculations, not live
+  prices, a valuation feed or quarterly/TTM data. Company fiscal periods are not silently
+  calendar-aligned. **All periods** expands actual evidence without filling missing years.
+
+Narratives and qualitative diagrams are interpretation. Statistical co-movement does not establish
+a cause, and a business diagram does not establish measured product/segment revenue shares.
 
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
 for that origin. Give the tester the complete URL, including its token. The dev runner removes
 its mapping on exit.
+
+For direct HTTP access over Tailscale, set `MATRIX_WEB_HOST=0.0.0.0` in `.env.local`
+and restart `vp run dev`. Use the machine's Tailscale IP and the printed web port.
+This exposes the development web server on all interfaces, including LAN; restrict access
+to trusted networks. Pairing remains required. The backend and Rust data daemon can stay
+on loopback because Vite proxies API and WebSocket traffic through the browser's origin.
+This bind-only setting does not pin HMR to `0.0.0.0` or change desktop development binding.
 
 Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
 origin so the same build works over localhost and remote connections.

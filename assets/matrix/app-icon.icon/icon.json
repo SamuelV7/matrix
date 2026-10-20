@@ -1,0 +1,15 @@
+{
+  "fill": { "solid": "srgb:0.03529,0.06667,0.08627,1.00000" },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "mark.svg",
+          "name": "Matrix",
+          "position": { "scale": 10, "translation-in-points": [0, 0] }
+        }
+      ]
+    }
+  ],
+  "supported-platforms": { "circles": ["watchOS"], "squares": "shared" }
+}

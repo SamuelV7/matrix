@@ -175,6 +175,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/matrix": {
+      "types": "./src/state/matrix.ts",
+      "default": "./src/state/matrix.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

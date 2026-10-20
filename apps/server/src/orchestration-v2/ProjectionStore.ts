@@ -411,6 +411,10 @@ export interface ProjectionStoreV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
+  /** Internal identity check; never expose cross-thread item contents. */
+  readonly getTurnItemOwner: (
+    itemId: TurnItemId,
+  ) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -1298,6 +1302,39 @@ function sortMessagesByTurnItemOrder(
   });
 }
 
+// Presentation order is separate from each item's immutable storage/run anchor.
+// Share it with the metadata-only history index so cursors and bounded payloads agree.
+function orderPresentedMatrixAnswers<
+  Row extends { readonly item: { readonly runId: RunId | null } },
+>(rows: Array<Row>, presentationRunId: (row: Row) => RunId | undefined): Array<Row> {
+  const lastRowByRun = new Map<RunId, number>();
+  for (const [index, row] of rows.entries()) {
+    const presentedRun = presentationRunId(row);
+    if (row.item.runId !== null && (presentedRun === undefined || presentedRun === row.item.runId))
+      lastRowByRun.set(row.item.runId, index);
+  }
+  const moved = new Set<Row>();
+  const after = new Map<number, Array<Row>>();
+  for (const row of rows) {
+    const presentedRun = presentationRunId(row);
+    if (presentedRun === undefined || presentedRun === row.item.runId) continue;
+    const target = lastRowByRun.get(presentedRun);
+    if (target === undefined) continue;
+    moved.add(row);
+    const group = after.get(target);
+    if (group === undefined) after.set(target, [row]);
+    else group.push(row);
+  }
+  if (moved.size === 0) return rows;
+  const ordered: Array<Row> = [];
+  for (const [index, row] of rows.entries()) {
+    if (!moved.has(row)) ordered.push(row);
+    const group = after.get(index);
+    if (group !== undefined) ordered.push(...group);
+  }
+  return ordered;
+}
+
 function activeLocalTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): Array<OrchestrationV2ProjectedTurnItem> {
@@ -1306,13 +1343,17 @@ function activeLocalTurnItems(
     attempts: projection.attempts,
     items: projection.turnItems,
   });
-  return projection.turnItems.filter(isVisible).map((item, position) => ({
-    position,
+  const rows = projection.turnItems.filter(isVisible).map((item) => ({
     visibility: "local" as const,
     sourceThreadId: item.threadId,
     sourceItemId: item.id,
     item,
   }));
+  return renumberVisibleTurnItems(
+    orderPresentedMatrixAnswers(rows, (row) =>
+      row.item.type === "matrix_answer" ? row.item.answer.lastPresentedRunId : undefined,
+    ),
+  );
 }
 
 function localVisibleTurnItems(
@@ -1324,12 +1365,15 @@ function localVisibleTurnItems(
 function inheritedVisibleTurnItemsFromLocalItems(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
 ): Array<Omit<OrchestrationV2ProjectedTurnItem, "position">> {
-  return items.map((item) => ({
+  const rows = items.map((item) => ({
     visibility: "inherited" as const,
     sourceThreadId: item.threadId,
     sourceItemId: item.id,
     item,
   }));
+  return orderPresentedMatrixAnswers(rows, (row) =>
+    row.item.type === "matrix_answer" ? row.item.answer.lastPresentedRunId : undefined,
+  );
 }
 
 function withLocalVisibleTurnItems(
@@ -2525,6 +2569,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             }
             case "turn-item.updated": {
+              if (event.payload.type === "matrix_answer") {
+                const owners = yield* sql<{ thread_id: string; type: string }>`
+                  SELECT thread_id, type FROM orchestration_v2_projection_turn_items
+                  WHERE turn_item_id = ${event.payload.id}`;
+                if (
+                  owners[0] !== undefined &&
+                  (owners[0].thread_id !== event.payload.threadId ||
+                    owners[0].type !== "matrix_answer")
+                ) {
+                  return yield* new ProjectionStoreApplyEventError({
+                    eventType: event.type,
+                    cause: "Matrix answer identity is already owned by another item.",
+                  });
+                }
+              }
               const payloadJson = yield* encodeTurnItemPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -2950,6 +3009,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   END
                 ), retained AS MATERIALIZED (
                   SELECT item_rowid, ordinal, turn_item_id FROM selected
+                  UNION
+                  SELECT answer.rowid AS item_rowid, answer.ordinal, answer.turn_item_id
+                  FROM orchestration_v2_projection_turn_items AS answer
+                  WHERE answer.thread_id = ${threadId}
+                    AND answer.type = 'matrix_answer'
+                    AND json_extract(answer.payload_json, '$.answer.lastPresentedRunId') IN (
+                      SELECT run_id FROM selected WHERE run_id IS NOT NULL
+                    )
                   UNION
                   SELECT request.rowid AS item_rowid, request.ordinal, request.turn_item_id
                   FROM orchestration_v2_projection_turn_items AS request
@@ -4278,7 +4345,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
-              'run_interrupt_result','file_change','proposed_plan')
+              'run_interrupt_result','file_change','proposed_plan','matrix_answer')
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -5194,6 +5261,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getTurnItemOwner: ProjectionStoreV2Shape["getTurnItemOwner"] = (itemId) =>
+      sql<{ thread_id: string }>`SELECT thread_id FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${itemId}`.pipe(
+        Effect.map((rows) => (rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id))),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       Effect.all([
         sql<{ id: string }>`
@@ -5281,6 +5355,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       >["inputIntent"];
       readonly createdBy?: "user" | "agent" | "system";
       readonly messageId?: MessageId;
+      readonly lastPresentedRunId?: RunId;
     };
     type TimelineIndexRow = {
       readonly sourceThreadId: ThreadId;
@@ -5310,10 +5385,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
           created_by: "user" | "agent" | "system" | null;
           message_id: string | null;
+          last_presented_run_id: string | null;
         }>`SELECT turn_item_id, run_id, node_id, type,
           CASE WHEN type = 'user_message' THEN json_extract(payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN type = 'user_message' THEN json_extract(payload_json, '$.createdBy') END AS created_by,
-          CASE WHEN type IN ('user_message', 'assistant_message') THEN json_extract(payload_json, '$.messageId') END AS message_id
+          CASE WHEN type IN ('user_message', 'assistant_message') THEN json_extract(payload_json, '$.messageId') END AS message_id,
+          CASE WHEN type = 'matrix_answer' THEN json_extract(payload_json, '$.answer.lastPresentedRunId') END AS last_presented_run_id
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}
         ORDER BY ordinal ASC, turn_item_id ASC`;
         const items: Array<TimelineIndexItem> = rows.map((row) => ({
@@ -5325,13 +5402,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
           ...(row.created_by === null ? {} : { createdBy: row.created_by }),
           ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
+          ...(row.last_presented_run_id === null
+            ? {}
+            : { lastPresentedRunId: RunId.make(row.last_presented_run_id) }),
         }));
-        const local: Array<TimelineIndexRow> = items.map((item) => ({
-          sourceThreadId: threadId,
-          sourceItemId: item.id,
-          visibility: "local",
-          item,
-        }));
+        const local: Array<TimelineIndexRow> = orderPresentedMatrixAnswers(
+          items.map((item) => ({
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            visibility: "local" as const,
+            item,
+          })),
+          (row) => row.item.lastPresentedRunId,
+        );
         const isVisible = createOrchestrationV2TurnItemVisibility({
           runs: records.runs,
           attempts: records.attempts,
@@ -5515,9 +5598,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 options.itemId === undefined
                   ? row.position > (options.afterPosition ?? -1) &&
                     (options.view === "activity" ||
-                      ["user_message", "assistant_message", "proposed_plan"].includes(
-                        row.item.type,
-                      ))
+                      [
+                        "user_message",
+                        "assistant_message",
+                        "proposed_plan",
+                        "matrix_answer",
+                      ].includes(row.item.type))
                   : row.sourceItemId === options.itemId,
               );
             const page = matching.slice(0, options.limit);
@@ -6485,6 +6571,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMessageCount,
       getNextTurnItemOrdinal,
       getTurnItem,
+      getTurnItemOwner,
       getThreadRecords,
       getRuntimeRequest,
       getPlan,
@@ -6785,6 +6872,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             (state) =>
               state.projections.get(threadId)?.turnItems.find((item) => item.id === itemId) ?? null,
           ),
+        ),
+      getTurnItemOwner: (itemId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            for (const [threadId, projection] of state.projections) {
+              if (projection.turnItems.some((item) => item.id === itemId)) return threadId;
+            }
+            return null;
+          }),
         ),
       getThreadAttachmentIds: (threadId) =>
         service.getThreadProjection(threadId).pipe(
@@ -7179,6 +7275,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
+                    "matrix_answer",
                   ].includes(item.type) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),
@@ -7252,7 +7349,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               options.itemId === undefined
                 ? row.position > (options.afterPosition ?? -1) &&
                   (options.view === "activity" ||
-                    ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type))
+                    [
+                      "user_message",
+                      "assistant_message",
+                      "proposed_plan",
+                      "matrix_answer",
+                    ].includes(row.item.type))
                 : row.sourceItemId === options.itemId,
             );
             return {

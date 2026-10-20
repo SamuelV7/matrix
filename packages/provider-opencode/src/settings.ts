@@ -52,6 +52,14 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    allowedModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({
+        description:
+          "Exact provider/model slugs allowed for this instance; empty allows all models.",
+        providerSettingsForm: { hidden: true },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
